@@ -1,0 +1,5 @@
+Enhance the background
+Make the data more realistic
+Change the Graph and make it more precise
+Add any other inspiring ideas 
+Start implementing the environment 

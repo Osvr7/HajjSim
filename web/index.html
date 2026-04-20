@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HajjSim Agent Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">HajjSim Agent Studio</p>
+        <h1>Build and inspect simulated pilgrim agents visually.</h1>
+        <p class="hero-copy">
+          Create a pilgrim manually, generate a random crowd, and explore how each
+          agent's profile, state, and memory appear inside the simulation.
+        </p>
+      </div>
+      <div class="hero-stats" id="summaryCards"></div>
+    </header>
+
+    <main class="layout">
+      <section class="panel control-panel">
+        <div class="panel-header">
+          <h2>Create Agents</h2>
+          <p>Manual setup or fast random population generation.</p>
+        </div>
+
+        <form id="manualForm" class="stack">
+          <div class="grid two">
+            <label>
+              Pilgrim ID
+              <input name="pilgrim_id" placeholder="Auto if blank">
+            </label>
+            <label>
+              Group ID
+              <input name="group_id" value="G_200" required>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Age
+              <input type="number" name="age" min="18" max="100" value="40" required>
+            </label>
+            <label>
+              Mobility
+              <input type="number" name="mobility" min="0.3" max="1.2" step="0.01" value="0.85" required>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Nationality
+              <input name="nationality" value="Saudi" required>
+            </label>
+            <label>
+              Language
+              <input name="language" value="Arabic" required>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Health Status
+              <select name="health_status">
+                <option value="stable">stable</option>
+                <option value="needs_support">needs_support</option>
+                <option value="high_risk">high_risk</option>
+              </select>
+            </label>
+            <label>
+              Risk Tolerance
+              <input type="number" name="risk_tolerance" min="0.1" max="1" step="0.01" value="0.5" required>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Initial Node
+              <input name="initial_node" value="Mina_Camp_4" required>
+            </label>
+            <label>
+              Target Node
+              <input name="target_node" value="Arafat" required>
+            </label>
+          </div>
+
+          <label>
+            Chronic Conditions
+            <input name="chronic_conditions" placeholder="diabetes, hypertension">
+          </label>
+
+          <button class="primary-btn" type="submit">Create Manual Agent</button>
+        </form>
+
+        <div class="divider"></div>
+
+        <form id="randomForm" class="stack">
+          <label>
+            Random Agent Count
+            <input type="number" name="count" min="1" max="500" value="25" required>
+          </label>
+          <button class="secondary-btn" type="submit">Generate Random Population</button>
+        </form>
+      </section>
+
+      <section class="panel map-panel">
+        <div class="panel-header">
+          <h2>Simulation View</h2>
+          <p>Each dot is a pilgrim agent positioned by current location and state.</p>
+        </div>
+        <div id="mapCanvas" class="map-canvas"></div>
+      </section>
+    </main>
+
+    <section class="panel list-panel">
+      <div class="panel-header">
+        <h2>Agent Roster</h2>
+        <p>Click an agent card to inspect profile, state, and memory in detail.</p>
+      </div>
+      <div id="agentGrid" class="agent-grid"></div>
+    </section>
+  </div>
+
+  <template id="agentCardTemplate">
+    <article class="agent-card">
+      <div class="agent-card-top">
+        <div>
+          <p class="agent-id"></p>
+          <h3 class="agent-title"></h3>
+        </div>
+        <span class="status-pill"></span>
+      </div>
+      <div class="mini-stats"></div>
+      <div class="detail-grid"></div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

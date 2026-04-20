@@ -1,0 +1,91 @@
+[
+  {
+    "pilgrim_id": "P_001",
+    "age": 65,
+    "nationality": "Indonesian",
+    "group_id": "G_102",
+    "mobility": 0.6,
+    "health_status": "needs_support",
+    "chronic_conditions": ["diabetes"],
+    "language": "Bahasa Indonesia",
+    "risk_tolerance": 0.25,
+    "initial_node": "Mina_Camp_4",
+    "target_node": "Arafat",
+    "social_memory": {
+      "leader_id": "P_002",
+      "known_companions": ["P_002"],
+      "help_contacts": ["Medical_Desk_1"],
+      "group_last_seen_node": "Mina_Camp_4"
+    },
+    "long_term_memory": {
+      "known_routes": {
+        "Arafat": ["Mina_Camp_4", "Bus_Stop_A", "Arafat"]
+      },
+      "known_hazards": {},
+      "learned_preferences": {
+        "prefer_shaded_route": 0.9
+      },
+      "ritual_progress": ["arrival_in_mina"]
+    }
+  },
+  {
+    "pilgrim_id": "P_002",
+    "age": 25,
+    "nationality": "Saudi",
+    "group_id": "G_102",
+    "mobility": 1.0,
+    "health_status": "stable",
+    "chronic_conditions": [],
+    "language": "Arabic",
+    "risk_tolerance": 0.7,
+    "initial_node": "Mina_Camp_4",
+    "target_node": "Arafat",
+    "social_memory": {
+      "leader_id": null,
+      "known_companions": ["P_001"],
+      "help_contacts": ["Guide_G_102"],
+      "group_last_seen_node": "Mina_Camp_4"
+    },
+    "long_term_memory": {
+      "known_routes": {
+        "Arafat": ["Mina_Camp_4", "Main_Walkway", "Arafat"]
+      },
+      "known_hazards": {},
+      "learned_preferences": {
+        "prefer_fast_route": 0.8
+      },
+      "ritual_progress": ["arrival_in_mina"]
+    }
+  },
+  {
+    "pilgrim_id": "P_003",
+    "age": 45,
+    "nationality": "Nigerian",
+    "group_id": "G_880",
+    "mobility": 0.9,
+    "health_status": "stable",
+    "chronic_conditions": [],
+    "language": "English",
+    "risk_tolerance": 0.45,
+    "initial_node": "Jamarat_Bridge",
+    "target_node": "Muzdalifah",
+    "social_memory": {
+      "leader_id": "Guide_G_880",
+      "known_companions": ["P_010", "P_011"],
+      "help_contacts": ["Guide_G_880"],
+      "group_last_seen_node": "Jamarat_Bridge"
+    },
+    "long_term_memory": {
+      "known_routes": {
+        "Muzdalifah": ["Jamarat_Bridge", "Tunnel_3", "Muzdalifah"]
+      },
+      "known_hazards": {
+        "Tunnel_3": "heavy_congestion"
+      },
+      "learned_preferences": {
+        "avoid_dense_areas": 0.75
+      },
+      "ritual_progress": ["stoning_complete"]
+    }
+  }
+]
