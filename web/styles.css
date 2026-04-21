@@ -2,11 +2,11 @@
   --bg-sand: #efe6d3;
   --bg-warm: #dbc79e;
   --bg-olive: #8c9c7d;
-  --panel: rgba(255, 249, 237, 0.35);
-  --panel-strong: rgba(255, 249, 237, 0.28);
+  --panel: rgba(255, 249, 237, 0.48);
+  --panel-strong: rgba(255, 249, 237, 0.44);
   --ink: #222d2a;
-  --muted: #5c675f;
-  --line: rgba(34, 45, 42, 0.14);
+  --muted: #39453f;
+  --line: rgba(34, 45, 42, 0.22);
   --brand: #1f6f52;
   --brand-dark: #164f3a;
   --accent: #b67a2f;
@@ -24,7 +24,7 @@ body {
   font-family: "Tajawal", sans-serif;
   color: var(--ink);
   background:
-    linear-gradient(rgba(24, 28, 22, 0.56), rgba(24, 28, 22, 0.6)),
+    linear-gradient(rgba(20, 24, 19, 0.2), rgba(20, 24, 19, 0.24)),
     url("./free-photo-of-night-view-of-kaaba-in-masjid-al-haram-makkah.jpeg") center/cover no-repeat fixed,
     url("https://upload.wikimedia.org/wikipedia/commons/3/35/Kaaba_Masjid_Haraam_Makkah.jpg") center/cover no-repeat fixed;
 }
@@ -35,8 +35,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(239, 230, 211, 0.1) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(239, 230, 211, 0.1) 1px, transparent 1px);
+    linear-gradient(rgba(239, 230, 211, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(239, 230, 211, 0.04) 1px, transparent 1px);
   background-size: 28px 28px;
   mask-image: radial-gradient(circle at center, black 24%, transparent 90%);
 }
@@ -60,7 +60,8 @@ body::before {
   font-size: 0.78rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--brand);
+  color: #f0e3c1;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
 h1,
@@ -74,6 +75,13 @@ h1 {
   font-size: clamp(2rem, 3.8vw, 3.6rem);
   line-height: 0.95;
   margin-bottom: 12px;
+  color: #fff4d8;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.52);
+}
+
+h2,
+h3 {
+  color: #21372d;
 }
 
 .hero-copy,
@@ -93,13 +101,18 @@ button {
   color: var(--muted);
 }
 
+.hero-copy {
+  color: #f2e8d1;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.42);
+}
+
 .hero-stats,
 .panel {
   background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 22px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(2px) saturate(110%);
 }
 
 .hero-stats {
@@ -111,7 +124,7 @@ button {
 }
 
 .stat-card {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.5);
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px;
@@ -165,7 +178,7 @@ select {
   padding: 11px 12px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.58);
   color: var(--ink);
   font-family: inherit;
 }
@@ -228,6 +241,50 @@ button:hover {
   border: 1px solid var(--line);
 }
 
+.map-wrap {
+  position: relative;
+}
+
+.map-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 500;
+  min-width: 170px;
+  background: rgba(22, 30, 26, 0.84);
+  color: #efe6d3;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  padding: 10px 12px;
+  backdrop-filter: blur(4px);
+}
+
+.map-legend h3 {
+  margin: 0 0 8px;
+  color: #f8e7be;
+  font-size: 0.88rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.83rem;
+  margin: 4px 0;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+.legend-dot.stable { background: #2b865f; }
+.legend-dot.support { background: #a67231; }
+.legend-dot.high { background: #c2402f; }
+.legend-dot.panic { background: #6d3fd1; }
+
 .chart-panel {
   margin-bottom: 16px;
 }
@@ -250,6 +307,58 @@ button:hover {
   padding: 14px;
   display: grid;
   gap: 10px;
+}
+
+.agent-card.risk-stable {
+  background: rgba(232, 245, 236, 0.46);
+}
+
+.agent-card.risk-support {
+  background: rgba(245, 229, 188, 0.5);
+}
+
+.agent-card.risk-high {
+  background: rgba(184, 56, 50, 0.3);
+  border-color: rgba(145, 28, 24, 0.45);
+}
+
+.agent-card.risk-panicking {
+  background: rgba(109, 63, 209, 0.3);
+  border-color: rgba(78, 41, 158, 0.52);
+}
+
+.agent-card-focus {
+  outline: 3px solid rgba(255, 208, 82, 0.95);
+  box-shadow: 0 0 0 8px rgba(255, 208, 82, 0.28);
+  animation: focusPulse 0.75s ease-in-out 2;
+}
+
+@keyframes focusPulse {
+  0% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.14);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+.agent-hover-tooltip {
+  background: rgba(20, 32, 28, 0.92);
+  color: #f7f1e3;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  font-family: "Tajawal", sans-serif;
+  font-size: 0.86rem;
+  line-height: 1.25;
+  padding: 8px 10px;
+}
+
+.agent-hover-tooltip strong {
+  color: #ffd082;
 }
 
 .agent-card-top {
@@ -276,7 +385,7 @@ button:hover {
   align-items: center;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(34, 45, 42, 0.09);
+  background: rgba(34, 45, 42, 0.14);
   color: var(--ink);
   font-size: 0.82rem;
   white-space: nowrap;
@@ -296,7 +405,7 @@ button:hover {
 .detail-item {
   border-radius: 13px;
   padding: 9px 11px;
-  background: rgba(226, 212, 181, 0.2);
+  background: rgba(226, 212, 181, 0.58);
 }
 
 .mini-stat strong,
@@ -333,6 +442,13 @@ button:hover {
 
   .map-canvas {
     min-height: 420px;
+  }
+
+  .map-legend {
+    right: 8px;
+    bottom: 8px;
+    min-width: 150px;
+    padding: 8px 10px;
   }
 
   #analyticsChart {

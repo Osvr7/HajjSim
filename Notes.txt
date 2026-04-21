@@ -3,3 +3,8 @@ Make the data more realistic
 Change the Graph and make it more precise
 Add any other inspiring ideas 
 Start implementing the environment 
+
+########################################
+Fix the nationality 
+Change the color of the title 
+In the agent roster change the background color based on thier stat for high risk make it red 

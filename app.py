@@ -210,9 +210,21 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
     def _build_summary(self) -> dict:
         agents = REPOSITORY.list_agents()
         total = len(agents)
-        panicking = sum(1 for agent in agents if agent["state"]["is_panicking"])
-        needs_support = sum(1 for agent in agents if agent["profile"]["health_status"] == "needs_support")
-        high_risk = sum(1 for agent in agents if agent["profile"]["health_status"] == "high_risk")
+        stable = 0
+        needs_support = 0
+        high_risk = 0
+        panicking = 0
+
+        for agent in agents:
+            risk_level = self._derive_operational_status(agent)
+            if risk_level == "panicking":
+                panicking += 1
+            elif risk_level == "high_risk":
+                high_risk += 1
+            elif risk_level == "needs_support":
+                needs_support += 1
+            else:
+                stable += 1
 
         avg_stress = round(
             sum(agent["state"]["stress"] for agent in agents) / total,
@@ -226,16 +238,37 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             sum(agent["state"]["hydration"] for agent in agents) / total,
             1,
         ) if total else 0.0
+        severity_index = round(
+            ((panicking * 1.0) + (high_risk * 0.7) + (needs_support * 0.4)) / total * 100,
+            1,
+        ) if total else 0.0
 
         return {
             "total_agents": total,
+            "stable_agents": stable,
             "panicking_agents": panicking,
             "needs_support_agents": needs_support,
             "high_risk_agents": high_risk,
             "avg_stress": avg_stress,
             "avg_fatigue": avg_fatigue,
             "avg_hydration": avg_hydration,
+            "severity_index": severity_index,
+            "simulation_tick": ENVIRONMENT.tick,
         }
+
+    def _derive_operational_status(self, agent: dict) -> str:
+        state = agent["state"]
+        stress = float(state["stress"])
+        fatigue = float(state["fatigue"])
+        hydration = float(state["hydration"])
+
+        if state["is_panicking"]:
+            return "panicking"
+        if stress >= 75.0 or fatigue >= 80.0 or hydration <= 35.0:
+            return "high_risk"
+        if stress >= 55.0 or fatigue >= 60.0 or hydration <= 55.0:
+            return "needs_support"
+        return "stable"
 
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode("utf-8")

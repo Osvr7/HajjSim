@@ -177,7 +177,7 @@
               <input type="number" name="density" min="0" max="10" step="0.1" value="5.0" required>
             </label>
             <label>
-              Temperature °C
+              Temperature &deg;C
               <input type="number" name="temperature" min="20" max="50" step="0.1" value="37.0" required>
             </label>
           </div>
@@ -237,7 +237,16 @@
           <h2>Live GPS Map</h2>
           <p>Real map tiles with Hajj landmarks and zoomable agent positions.</p>
         </div>
-        <div id="mapCanvas" class="map-canvas"></div>
+        <div class="map-wrap">
+          <div id="mapCanvas" class="map-canvas"></div>
+          <aside class="map-legend" aria-label="Agent Color Legend">
+            <h3>Agent Status Colors</h3>
+            <div class="legend-item"><span class="legend-dot stable"></span><span>Stable</span></div>
+            <div class="legend-item"><span class="legend-dot support"></span><span>Need Support</span></div>
+            <div class="legend-item"><span class="legend-dot high"></span><span>High Risk</span></div>
+            <div class="legend-item"><span class="legend-dot panic"></span><span>Panicking</span></div>
+          </aside>
+        </div>
       </section>
     </main>
 
@@ -278,3 +287,4 @@
   <script src="app.js"></script>
 </body>
 </html>
+

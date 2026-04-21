@@ -253,7 +253,7 @@ class AgentFactory:
     """Creates large numbers of pilgrim variants from configurable distributions."""
 
     DEFAULT_NATIONALITIES: Sequence[Tuple[str, str]] = (
-        ("Saudi", "Arabic"),
+        ("Saudi Arabia", "Arabic"),
         ("Indonesian", "Bahasa Indonesia"),
         ("Pakistani", "Urdu"),
         ("Indian", "Hindi"),
@@ -265,13 +265,25 @@ class AgentFactory:
         ("Moroccan", "Arabic"),
     )
     DEFAULT_INITIAL_NODES: Sequence[str] = (
+        "Masjid_al_Haram_Perimeter",
+        "Aziziyah_Zone",
+        "Makkah_Bus_Station",
+        "Mina_West_Gate",
+        "Mina_East_Gate",
         "Mina_Camp_1",
         "Mina_Camp_2",
         "Mina_Camp_4",
+        "Mina_Camps_Core",
         "Jamarat_Bridge",
         "Arafat_Gate",
     )
     DEFAULT_TARGET_NODES: Sequence[str] = (
+        "Tawaf_Area",
+        "Sai_Corridor",
+        "Mina_Camps_Core",
+        "Jamarat_Complex",
+        "Arafat_Main_Field",
+        "Muzdalifah_Open_Area",
         "Arafat",
         "Muzdalifah",
         "Jamarat",
