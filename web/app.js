@@ -270,10 +270,10 @@ function deriveOperationalRisk(agent) {
   const fatigue = Number(agent.state.fatigue || 0);
   const hydration = Number(agent.state.hydration || 100);
 
-  if (agent.state.is_panicking || stress >= 75 || fatigue >= 80 || hydration <= 35) {
+  if (stress >= 88 || fatigue >= 86 || hydration <= 28) {
     return "high_risk";
   }
-  if (stress >= 55 || fatigue >= 60 || hydration <= 55) {
+  if (stress >= 62 || fatigue >= 58 || hydration <= 62) {
     return "needs_support";
   }
   return "stable";

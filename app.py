@@ -264,9 +264,9 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
         if state["is_panicking"]:
             return "panicking"
-        if stress >= 75.0 or fatigue >= 80.0 or hydration <= 35.0:
+        if stress >= 88.0 or fatigue >= 86.0 or hydration <= 28.0:
             return "high_risk"
-        if stress >= 55.0 or fatigue >= 60.0 or hydration <= 55.0:
+        if stress >= 62.0 or fatigue >= 58.0 or hydration <= 62.0:
             return "needs_support"
         return "stable"
 

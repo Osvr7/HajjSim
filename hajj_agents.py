@@ -101,12 +101,20 @@ class BehaviorEngine:
         state = self.agent.state
         profile = self.agent.profile
         social = self.agent.memory.social
+        hazard = environment_data.get("hazard")
 
-        if state.stress >= 85.0:
+        if state.is_panicking and state.stress < 88.0 and state.hydration > 45.0:
+            return "REST"
+
+        # Panic is now a severe condition, not the default stress response.
+        if state.stress >= 95.0 and (float(environment_data.get("density", 0.0)) >= 8.0 or hazard):
             return "ENTER_PANIC_MODE"
 
         if state.fatigue >= 75.0 or state.hydration <= 30.0:
             return "REST"
+
+        if state.stress >= 80.0:
+            return "AVOID_CROWD"
 
         if not state.is_with_group and social.group_last_seen_node:
             return f"MOVE_TO_{social.group_last_seen_node}"
@@ -152,18 +160,52 @@ class PilgrimAgent:
         hazard = environment_data.get("hazard")
         visible_group_node = environment_data.get("group_location")
 
-        stress_gain = max(0.0, density - 3.0) * 4.0
-        fatigue_gain = max(0.5, 1.5 - self.profile.mobility)
-        hydration_loss = max(1.0, (temperature - 28.0) * 0.4)
+        stress_gain = max(0.0, density - 4.0) * 1.4 + max(0.0, temperature - 36.0) * 0.35
+        fatigue_gain = max(0.5, 1.5 - self.profile.mobility) + max(0.0, temperature - 34.0) * 0.15
+        hydration_loss = max(0.8, (temperature - 28.0) * 0.28)
 
         if self.profile.health_status.lower() != "stable":
             fatigue_gain += 0.5
             stress_gain += 2.0
 
+        if self.state.is_with_group:
+            stress_gain = max(0.0, stress_gain - 1.0)
+        else:
+            stress_gain += 2.0
+
+        if hazard:
+            hazard_stress_boost = {
+                "stampede_risk": 3.0,
+                "crowd_bottleneck": 2.4,
+                "extreme_heat": 2.2,
+                "medical_overload": 2.0,
+                "route_closure": 1.9,
+                "transport_delay": 1.4,
+                "lost_group_member": 1.8,
+                "heat_stress": 2.1,
+                "medical_incident": 1.6,
+                "route_congestion": 1.7,
+            }.get(str(hazard), 1.2)
+            stress_gain += hazard_stress_boost
+
         self.state.stress = min(100.0, self.state.stress + stress_gain)
         self.state.fatigue = min(100.0, self.state.fatigue + fatigue_gain)
         self.state.hydration = max(0.0, self.state.hydration - hydration_loss)
-        self.state.is_panicking = self.state.stress >= 85.0
+
+        panic_threshold = 96.0
+        panic_threshold -= self.profile.risk_tolerance * 6.0
+        if self.profile.health_status == "needs_support":
+            panic_threshold -= 2.0
+        elif self.profile.health_status == "high_risk":
+            panic_threshold -= 4.0
+        if hazard in {"stampede_risk", "crowd_bottleneck"}:
+            panic_threshold -= 3.0
+
+        self.state.is_panicking = (
+            self.state.stress >= panic_threshold
+            and self.state.hydration <= 55.0
+            and density >= 6.0
+        )
 
         if hazard:
             self.memory.long_term.known_hazards[self.state.current_node] = str(hazard)
@@ -179,15 +221,17 @@ class PilgrimAgent:
         self.state.last_action = action
 
         if action == "REST":
-            self.state.fatigue = max(0.0, self.state.fatigue - 8.0)
-            self.state.stress = max(0.0, self.state.stress - 5.0)
-            self.state.hydration = min(100.0, self.state.hydration + 10.0)
+            self.state.fatigue = max(0.0, self.state.fatigue - 12.0)
+            self.state.stress = max(0.0, self.state.stress - 9.0)
+            self.state.hydration = min(100.0, self.state.hydration + 14.0)
+            if self.state.stress < 85.0 and self.state.hydration > 45.0:
+                self.state.is_panicking = False
             return
 
         if action == "AVOID_CROWD":
             alternate_node = environment_data.get("alternate_node", self.state.current_node)
             self.state.current_node = alternate_node
-            self.state.stress = max(0.0, self.state.stress - 3.0)
+            self.state.stress = max(0.0, self.state.stress - 6.0)
             return
 
         if action == "ENTER_PANIC_MODE":
