@@ -255,9 +255,14 @@ class AgentFactory:
     DEFAULT_NATIONALITIES: Sequence[Tuple[str, str]] = (
         ("Saudi", "Arabic"),
         ("Indonesian", "Bahasa Indonesia"),
-        ("Nigerian", "English"),
         ("Pakistani", "Urdu"),
+        ("Indian", "Hindi"),
+        ("Bangladeshi", "Bengali"),
+        ("Egyptian", "Arabic"),
+        ("Nigerian", "English"),
         ("Turkish", "Turkish"),
+        ("Malaysian", "Malay"),
+        ("Moroccan", "Arabic"),
     )
     DEFAULT_INITIAL_NODES: Sequence[str] = (
         "Mina_Camp_1",
@@ -326,7 +331,7 @@ class AgentFactory:
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> PilgrimAgent:
         nationality, language = self.random.choice(list(self.DEFAULT_NATIONALITIES))
-        age = self.random.randint(18, 85)
+        age = self.random.randint(18, 90)
         health_status = self._weighted_choice(self.DEFAULT_HEALTH_WEIGHTS)
         mobility = self._derive_mobility(age, health_status)
         chronic_conditions = self._sample_conditions(health_status)

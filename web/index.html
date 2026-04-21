@@ -6,7 +6,8 @@
   <title>HajjSim Agent Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -14,10 +15,10 @@
     <header class="hero">
       <div>
         <p class="eyebrow">HajjSim Agent Studio</p>
-        <h1>Build and inspect simulated pilgrim agents visually.</h1>
+        <h1>Smarter Hajj Pilgrim Simulation for Makkah Scenarios.</h1>
         <p class="hero-copy">
-          Create a pilgrim manually, generate a random crowd, and explore how each
-          agent's profile, state, and memory appear inside the simulation.
+          Build realistic pilgrim profiles, simulate crowd pressure, and inspect movement over real
+          Hajj locations with live environment controls.
         </p>
       </div>
       <div class="hero-stats" id="summaryCards"></div>
@@ -26,8 +27,8 @@
     <main class="layout">
       <section class="panel control-panel">
         <div class="panel-header">
-          <h2>Create Agents</h2>
-          <p>Manual setup or fast random population generation.</p>
+          <h2>Create Pilgrim Agents</h2>
+          <p>Use realistic profile parameters from common Hajj demographics.</p>
         </div>
 
         <form id="manualForm" class="stack">
@@ -45,26 +46,12 @@
           <div class="grid two">
             <label>
               Age
-              <input type="number" name="age" min="18" max="100" value="40" required>
+              <select name="age" required>
+                <option value="18">18</option><option value="22">22</option><option value="27">27</option><option value="32">32</option>
+                <option value="38" selected>38</option><option value="45">45</option><option value="52">52</option><option value="60">60</option>
+                <option value="68">68</option><option value="75">75</option><option value="82">82</option>
+              </select>
             </label>
-            <label>
-              Mobility
-              <input type="number" name="mobility" min="0.3" max="1.2" step="0.01" value="0.85" required>
-            </label>
-          </div>
-
-          <div class="grid two">
-            <label>
-              Nationality
-              <input name="nationality" value="Saudi" required>
-            </label>
-            <label>
-              Language
-              <input name="language" value="Arabic" required>
-            </label>
-          </div>
-
-          <div class="grid two">
             <label>
               Health Status
               <select name="health_status">
@@ -73,26 +60,94 @@
                 <option value="high_risk">high_risk</option>
               </select>
             </label>
+          </div>
+
+          <div class="grid two">
             <label>
-              Risk Tolerance
-              <input type="number" name="risk_tolerance" min="0.1" max="1" step="0.01" value="0.5" required>
+              Nationality
+              <select name="nationality" required>
+                <option value="Saudi" selected>Saudi</option>
+                <option value="Indonesian">Indonesian</option>
+                <option value="Pakistani">Pakistani</option>
+                <option value="Indian">Indian</option>
+                <option value="Bangladeshi">Bangladeshi</option>
+                <option value="Egyptian">Egyptian</option>
+                <option value="Nigerian">Nigerian</option>
+                <option value="Turkish">Turkish</option>
+                <option value="Malaysian">Malaysian</option>
+                <option value="Moroccan">Moroccan</option>
+              </select>
+            </label>
+            <label>
+              Language
+              <select name="language" required>
+                <option value="Arabic" selected>Arabic</option>
+                <option value="English">English</option>
+                <option value="Bahasa Indonesia">Bahasa Indonesia</option>
+                <option value="Urdu">Urdu</option>
+                <option value="Hindi">Hindi</option>
+                <option value="Bengali">Bengali</option>
+                <option value="Turkish">Turkish</option>
+                <option value="Malay">Malay</option>
+              </select>
             </label>
           </div>
 
           <div class="grid two">
             <label>
-              Initial Node
-              <input name="initial_node" value="Mina_Camp_4" required>
+              Mobility Index
+              <select name="mobility">
+                <option value="1.05">high_mobility (1.05)</option>
+                <option value="0.90" selected>normal_mobility (0.90)</option>
+                <option value="0.72">needs_support (0.72)</option>
+                <option value="0.55">limited_mobility (0.55)</option>
+              </select>
             </label>
             <label>
-              Target Node
-              <input name="target_node" value="Arafat" required>
+              Risk Tolerance
+              <select name="risk_tolerance">
+                <option value="0.2">low (0.2)</option>
+                <option value="0.4">careful (0.4)</option>
+                <option value="0.5" selected>balanced (0.5)</option>
+                <option value="0.7">confident (0.7)</option>
+                <option value="0.85">high (0.85)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Initial Location
+              <select name="initial_node" required>
+                <option value="Mina_Camp_1">Mina_Camp_1</option>
+                <option value="Mina_Camp_2">Mina_Camp_2</option>
+                <option value="Mina_Camp_4" selected>Mina_Camp_4</option>
+                <option value="Jamarat_Bridge">Jamarat_Bridge</option>
+                <option value="Arafat_Gate">Arafat_Gate</option>
+                <option value="Muzdalifah">Muzdalifah</option>
+              </select>
+            </label>
+            <label>
+              Target Location
+              <select name="target_node" required>
+                <option value="Arafat" selected>Arafat</option>
+                <option value="Muzdalifah">Muzdalifah</option>
+                <option value="Jamarat">Jamarat</option>
+              </select>
             </label>
           </div>
 
           <label>
-            Chronic Conditions
-            <input name="chronic_conditions" placeholder="diabetes, hypertension">
+            Chronic Conditions (Ctrl/Cmd + click for multi-select)
+            <select name="chronic_conditions" multiple size="5">
+              <option value="">none</option>
+              <option value="diabetes">diabetes</option>
+              <option value="hypertension">hypertension</option>
+              <option value="arthritis">arthritis</option>
+              <option value="heart_disease">heart_disease</option>
+              <option value="respiratory_issue">respiratory_issue</option>
+              <option value="mobility_impairment">mobility_impairment</option>
+            </select>
           </label>
 
           <button class="primary-btn" type="submit">Create Manual Agent</button>
@@ -107,16 +162,92 @@
           </label>
           <button class="secondary-btn" type="submit">Generate Random Population</button>
         </form>
+
+        <div class="divider"></div>
+
+        <form id="environmentForm" class="stack">
+          <div class="panel-header compact">
+            <h2>Environment Controls</h2>
+            <p>Start simulation environment and advance one tick per step.</p>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Density (0-10)
+              <input type="number" name="density" min="0" max="10" step="0.1" value="5.0" required>
+            </label>
+            <label>
+              Temperature °C
+              <input type="number" name="temperature" min="20" max="50" step="0.1" value="37.0" required>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Hazard
+              <select name="hazard">
+                <option value="none" selected>none</option>
+                <option value="heat_stress">heat_stress</option>
+                <option value="crowd_bottleneck">crowd_bottleneck</option>
+                <option value="medical_incident">medical_incident</option>
+                <option value="route_closure">route_closure</option>
+              </select>
+            </label>
+            <label>
+              Group Location
+              <select name="group_location">
+                <option value="Mina_Camp_1">Mina_Camp_1</option>
+                <option value="Mina_Camp_2">Mina_Camp_2</option>
+                <option value="Mina_Camp_4" selected>Mina_Camp_4</option>
+                <option value="Jamarat_Bridge">Jamarat_Bridge</option>
+                <option value="Arafat_Gate">Arafat_Gate</option>
+                <option value="Arafat">Arafat</option>
+                <option value="Muzdalifah">Muzdalifah</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Alternate Node
+              <select name="alternate_node">
+                <option value="Shade_Corridor" selected>Shade_Corridor</option>
+                <option value="Transit_Corridor">Transit_Corridor</option>
+                <option value="Mina_Camp_2">Mina_Camp_2</option>
+                <option value="Arafat_Gate">Arafat_Gate</option>
+              </select>
+            </label>
+            <label>
+              Panic Node
+              <select name="panic_node">
+                <option value="Emergency_Point" selected>Emergency_Point</option>
+                <option value="Mina_Camp_1">Mina_Camp_1</option>
+                <option value="Jamarat_Bridge">Jamarat_Bridge</option>
+              </select>
+            </label>
+          </div>
+
+          <button class="accent-btn" type="submit">Simulate One Tick</button>
+          <p class="environment-tick">Current Tick: <strong id="environmentTick">0</strong></p>
+        </form>
       </section>
 
       <section class="panel map-panel">
         <div class="panel-header">
-          <h2>Simulation View</h2>
-          <p>Each dot is a pilgrim agent positioned by current location and state.</p>
+          <h2>Live GPS Map</h2>
+          <p>Real map tiles with Hajj landmarks and zoomable agent positions.</p>
         </div>
         <div id="mapCanvas" class="map-canvas"></div>
       </section>
     </main>
+
+    <section class="panel chart-panel">
+      <div class="panel-header">
+        <h2>Operational Graph</h2>
+        <p>Live distribution of pilgrims by major locations.</p>
+      </div>
+      <canvas id="analyticsChart" height="120"></canvas>
+    </section>
 
     <section class="panel list-panel">
       <div class="panel-header">
@@ -141,6 +272,9 @@
     </article>
   </template>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -10,6 +11,52 @@ from hajj_agents import AgentFactory, build_agent_from_record, build_manual_agen
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "web"
 DATA_FILE = BASE_DIR / "pilgrims.json"
+
+
+@dataclass
+class EnvironmentState:
+    density: float = 5.0
+    temperature: float = 37.0
+    hazard: str = "none"
+    group_location: str = "Mina_Camp_4"
+    alternate_node: str = "Shade_Corridor"
+    panic_node: str = "Emergency_Point"
+    tick: int = 0
+
+    def apply_updates(self, payload: dict) -> None:
+        if "density" in payload:
+            self.density = max(0.0, min(10.0, float(payload["density"])))
+        if "temperature" in payload:
+            self.temperature = max(20.0, min(50.0, float(payload["temperature"])))
+        if "hazard" in payload:
+            self.hazard = str(payload["hazard"] or "none")
+        if "group_location" in payload:
+            self.group_location = str(payload["group_location"] or self.group_location)
+        if "alternate_node" in payload:
+            self.alternate_node = str(payload["alternate_node"] or self.alternate_node)
+        if "panic_node" in payload:
+            self.panic_node = str(payload["panic_node"] or self.panic_node)
+
+    def to_payload(self) -> dict:
+        return {
+            "density": self.density,
+            "temperature": self.temperature,
+            "hazard": None if self.hazard == "none" else self.hazard,
+            "group_location": self.group_location,
+            "alternate_node": self.alternate_node,
+            "panic_node": self.panic_node,
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "density": round(self.density, 2),
+            "temperature": round(self.temperature, 2),
+            "hazard": self.hazard,
+            "group_location": self.group_location,
+            "alternate_node": self.alternate_node,
+            "panic_node": self.panic_node,
+            "tick": self.tick,
+        }
 
 
 class AgentRepository:
@@ -44,6 +91,8 @@ class AgentRepository:
 
     def create_manual_agent(self, payload: dict) -> dict:
         pilgrim_id = payload.get("pilgrim_id") or f"P_{self._next_index:04d}"
+        chronic_conditions = self._parse_conditions(payload.get("chronic_conditions", []))
+
         agent = build_manual_agent(
             pilgrim_id=pilgrim_id,
             age=int(payload["age"]),
@@ -54,7 +103,7 @@ class AgentRepository:
             initial_node=payload["initial_node"],
             target_node=payload["target_node"],
             language=payload.get("language", "Arabic"),
-            chronic_conditions=self._split_csv(payload.get("chronic_conditions", "")),
+            chronic_conditions=chronic_conditions,
             risk_tolerance=float(payload.get("risk_tolerance", 0.5)),
         )
         self.agents[agent.profile.pilgrim_id] = agent
@@ -67,6 +116,13 @@ class AgentRepository:
         self._next_index += count
         return [agent.get_snapshot() for agent in generated.values()]
 
+    def step_all(self, environment_data: dict) -> list[dict]:
+        actions = []
+        for agent in self.agents.values():
+            action = agent.step(environment_data)
+            actions.append({"pilgrim_id": agent.profile.pilgrim_id, "action": action})
+        return actions
+
     def _advance_index(self, pilgrim_id: str) -> None:
         digits = "".join(char for char in pilgrim_id if char.isdigit())
         if digits:
@@ -74,11 +130,16 @@ class AgentRepository:
         else:
             self._next_index += 1
 
-    def _split_csv(self, value: str) -> list[str]:
-        return [item.strip() for item in value.split(",") if item.strip()]
+    def _parse_conditions(self, value) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return []
 
 
 REPOSITORY = AgentRepository(DATA_FILE)
+ENVIRONMENT = EnvironmentState()
 
 
 class HajjSimHandler(SimpleHTTPRequestHandler):
@@ -92,6 +153,9 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/summary":
             self._send_json(self._build_summary())
+            return
+        if parsed.path == "/api/environment":
+            self._send_json({"environment": ENVIRONMENT.to_dict()})
             return
         if parsed.path in ("/", "/index.html"):
             self.path = "/index.html"
@@ -114,6 +178,24 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             self._send_json({"agents": agents}, status=HTTPStatus.CREATED)
             return
 
+        if parsed.path == "/api/environment":
+            ENVIRONMENT.apply_updates(payload)
+            self._send_json({"environment": ENVIRONMENT.to_dict()})
+            return
+
+        if parsed.path == "/api/simulate/step":
+            ENVIRONMENT.apply_updates(payload)
+            actions = REPOSITORY.step_all(ENVIRONMENT.to_payload())
+            ENVIRONMENT.tick += 1
+            self._send_json(
+                {
+                    "environment": ENVIRONMENT.to_dict(),
+                    "actions": actions,
+                    "summary": self._build_summary(),
+                }
+            )
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
 
     def _parse_body(self, raw_body: str) -> dict:
@@ -122,13 +204,16 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             return json.loads(raw_body or "{}")
         if "application/x-www-form-urlencoded" in content_type:
             parsed = parse_qs(raw_body)
-            return {key: values[0] for key, values in parsed.items()}
+            return {key: values[0] if len(values) == 1 else values for key, values in parsed.items()}
         return {}
 
     def _build_summary(self) -> dict:
         agents = REPOSITORY.list_agents()
         total = len(agents)
         panicking = sum(1 for agent in agents if agent["state"]["is_panicking"])
+        needs_support = sum(1 for agent in agents if agent["profile"]["health_status"] == "needs_support")
+        high_risk = sum(1 for agent in agents if agent["profile"]["health_status"] == "high_risk")
+
         avg_stress = round(
             sum(agent["state"]["stress"] for agent in agents) / total,
             1,
@@ -137,11 +222,19 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             sum(agent["state"]["fatigue"] for agent in agents) / total,
             1,
         ) if total else 0.0
+        avg_hydration = round(
+            sum(agent["state"]["hydration"] for agent in agents) / total,
+            1,
+        ) if total else 0.0
+
         return {
             "total_agents": total,
             "panicking_agents": panicking,
+            "needs_support_agents": needs_support,
+            "high_risk_agents": high_risk,
             "avg_stress": avg_stress,
             "avg_fatigue": avg_fatigue,
+            "avg_hydration": avg_hydration,
         }
 
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
