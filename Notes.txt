@@ -8,3 +8,41 @@ Start implementing the environment
 Fix the nationality 
 Change the color of the title 
 In the agent roster change the background color based on thier stat for high risk make it red 
+
+Today's tasks:
+
+We redesigned the website to match a Makkah/Hajj theme and improved the overall visual quality.
+
+We replaced many free-text inputs with realistic select lists for easier and more accurate data entry.
+
+We expanded nationality options to include almost all countries.
+
+We added more realistic Hajj location nodes and connected them across frontend and backend.
+
+We replaced the static map with a real GPS-based map using zoom and pan.
+
+We added route polylines between holy sites to show movement paths.
+
+We added a heatmap layer to show crowd density hotspots.
+
+We added a status legend around the GPS map so users can understand agent colors quickly.
+
+We made agent marker colors depend on live status (stable, need support, high risk, panicking).
+
+We added hover tooltips on pilgrims to show quick details.
+
+We improved click behavior so clicking a pilgrim takes you to the roster card and highlights it clearly.
+
+We implemented environment controls and simulation tick behavior in the web app.
+
+We added backend environment APIs to run scenario steps and return updated data.
+
+We made top analysis cards scenario-driven and more realistic.
+
+We changed risk counting to exclusive categories so totals are clearer and not confusing.
+
+We tuned the simulation logic so panic is harder to trigger and recovery is more realistic.
+
+We aligned frontend and backend risk thresholds so displayed status matches simulation behavior.
+
+We validated the Python files after changes to ensure the code runs correctly.
