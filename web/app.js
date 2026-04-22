@@ -180,6 +180,14 @@ const summaryCards = document.querySelector("#summaryCards");
 const mapCanvas = document.querySelector("#mapCanvas");
 const agentGrid = document.querySelector("#agentGrid");
 const agentCardTemplate = document.querySelector("#agentCardTemplate");
+const rosterSearchInput = document.querySelector("#rosterSearchInput");
+const groupFilterSelect = document.querySelector("#groupFilter");
+const riskFilterSelect = document.querySelector("#riskFilter");
+const sortRosterSelect = document.querySelector("#sortRosterSelect");
+const applyRosterFiltersButton = document.querySelector("#applyRosterFilters");
+const applyRosterSortButton = document.querySelector("#applyRosterSort");
+const clearRosterFiltersButton = document.querySelector("#clearRosterFilters");
+const rosterMeta = document.querySelector("#rosterMeta");
 const manualForm = document.querySelector("#manualForm");
 const randomForm = document.querySelector("#randomForm");
 const environmentForm = document.querySelector("#environmentForm");
@@ -192,6 +200,13 @@ let mapLayerGroup;
 let routeLayerGroup;
 let heatLayer;
 let analyticsChart;
+
+const rosterFilters = {
+  searchQuery: "",
+  groupId: "all",
+  risk: "all",
+  sortMode: "default"
+};
 
 function populateNationalityOptions() {
   const nationalitySelect = manualForm.elements.nationality;
@@ -462,10 +477,96 @@ function renderHeatmap(currentAgents, environment) {
   heatLayer.addTo(map);
 }
 
+function populateGroupFilterOptions(currentAgents) {
+  if (!groupFilterSelect) {
+    return;
+  }
+
+  const availableGroups = [...new Set(
+    currentAgents
+      .map((agent) => agent.profile.group_id)
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+
+  groupFilterSelect.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = "All groups";
+  groupFilterSelect.appendChild(allOption);
+
+  availableGroups.forEach((groupId) => {
+    const option = document.createElement("option");
+    option.value = groupId;
+    option.textContent = groupId;
+    groupFilterSelect.appendChild(option);
+  });
+
+  if (!availableGroups.includes(rosterFilters.groupId)) {
+    rosterFilters.groupId = "all";
+  }
+
+  groupFilterSelect.value = rosterFilters.groupId;
+}
+
+function syncSortControl() {
+  if (!sortRosterSelect) {
+    return;
+  }
+  sortRosterSelect.value = rosterFilters.sortMode;
+}
+
+function getDisplayedAgents(currentAgents) {
+  const filteredAgents = currentAgents.filter((agent) => {
+    const searchQuery = rosterFilters.searchQuery.trim().toLowerCase();
+    const searchableFields = [
+      agent.profile.pilgrim_id,
+      agent.profile.nationality,
+      agent.profile.group_id
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const matchesSearch = !searchQuery || searchableFields.includes(searchQuery);
+    const matchesGroup = rosterFilters.groupId === "all" || agent.profile.group_id === rosterFilters.groupId;
+    const matchesRisk = rosterFilters.risk === "all" || getAgentStatus(agent) === rosterFilters.risk;
+    return matchesSearch && matchesGroup && matchesRisk;
+  });
+
+  switch (rosterFilters.sortMode) {
+    case "stress_desc":
+      return filteredAgents.sort((a, b) => Number(b.state.stress || 0) - Number(a.state.stress || 0));
+    case "stress_asc":
+      return filteredAgents.sort((a, b) => Number(a.state.stress || 0) - Number(b.state.stress || 0));
+    case "hydration_desc":
+      return filteredAgents.sort((a, b) => Number(b.state.hydration || 0) - Number(a.state.hydration || 0));
+    case "hydration_asc":
+      return filteredAgents.sort((a, b) => Number(a.state.hydration || 0) - Number(b.state.hydration || 0));
+    default:
+      return filteredAgents;
+  }
+}
+
+function updateRosterMeta(visibleCount, totalCount) {
+  if (!rosterMeta) {
+    return;
+  }
+
+  rosterMeta.textContent = `Showing ${visibleCount} of ${totalCount} pilgrims`;
+}
+
 function renderAgents(currentAgents) {
+  const visibleAgents = getDisplayedAgents(currentAgents);
   agentGrid.innerHTML = "";
 
-  currentAgents.forEach((agent) => {
+  if (!visibleAgents.length) {
+    updateRosterMeta(0, currentAgents.length);
+    agentGrid.innerHTML = `<div class="roster-empty">No pilgrims match the current filters.</div>`;
+    return;
+  }
+
+  visibleAgents.forEach((agent) => {
     const fragment = agentCardTemplate.content.cloneNode(true);
     const card = fragment.querySelector(".agent-card");
     const statusKey = getAgentStatus(agent);
@@ -488,7 +589,7 @@ function renderAgents(currentAgents) {
     miniStats.innerHTML = [
       statBlock("Age", agent.profile.age),
       statBlock("Stress", agent.state.stress.toFixed(1)),
-      statBlock("Fatigue", agent.state.fatigue.toFixed(1))
+      statBlock("Hydration", agent.state.hydration.toFixed(1))
     ].join("");
 
     const detailGrid = fragment.querySelector(".detail-grid");
@@ -497,12 +598,15 @@ function renderAgents(currentAgents) {
       detailBlock("Group", agent.profile.group_id),
       detailBlock("Mobility", agent.profile.mobility),
       detailBlock("Language", agent.profile.language),
+      detailBlock("Fatigue", agent.state.fatigue.toFixed(1)),
       detailBlock("Memory", (agent.memory.short_term.recent_nodes || []).join(", ") || "Fresh agent"),
       detailBlock("Conditions", (agent.profile.chronic_conditions || []).join(", ") || "None")
     ].join("");
 
     agentGrid.appendChild(fragment);
   });
+
+  updateRosterMeta(visibleAgents.length, currentAgents.length);
 }
 
 function renderChart(currentAgents) {
@@ -585,11 +689,14 @@ function scrollToAgent(agentId) {
 }
 
 function focusNodeAgents(nodeId) {
-  const matching = agents.filter((agent) => agent.state.current_node === nodeId);
-  if (!matching.length) {
+  const visibleAgents = getDisplayedAgents(agents);
+  const matching = visibleAgents.filter((agent) => agent.state.current_node === nodeId);
+  const fallback = agents.filter((agent) => agent.state.current_node === nodeId);
+  const targetAgents = matching.length ? matching : fallback;
+  if (!targetAgents.length) {
     return;
   }
-  scrollToAgent(matching[0].profile.pilgrim_id);
+  scrollToAgent(targetAgents[0].profile.pilgrim_id);
 }
 
 function jitter(seed, amount) {
@@ -620,9 +727,44 @@ function resetManualDefaults() {
   manualForm.target_node.value = "Arafat_Main_Field";
 }
 
+function applyRosterFilters() {
+  rosterFilters.searchQuery = rosterSearchInput?.value || "";
+  rosterFilters.groupId = groupFilterSelect?.value || "all";
+  rosterFilters.risk = riskFilterSelect?.value || "all";
+  rosterFilters.sortMode = sortRosterSelect?.value || "default";
+  renderAgents(agents);
+}
+
+function applyRosterSort() {
+  rosterFilters.sortMode = sortRosterSelect?.value || "default";
+  renderAgents(agents);
+}
+
+function clearRosterFilters() {
+  rosterFilters.searchQuery = "";
+  rosterFilters.groupId = "all";
+  rosterFilters.risk = "all";
+  rosterFilters.sortMode = "default";
+
+  if (rosterSearchInput) {
+    rosterSearchInput.value = "";
+  }
+  if (groupFilterSelect) {
+    groupFilterSelect.value = "all";
+  }
+  if (riskFilterSelect) {
+    riskFilterSelect.value = "all";
+  }
+  if (sortRosterSelect) {
+    sortRosterSelect.value = "default";
+  }
+  renderAgents(agents);
+}
+
 populateNationalityOptions();
 syncLanguageWithNationality();
 initializeScenarioOptions();
+syncSortControl();
 
 function applyEnvironmentForm(environment) {
   environmentForm.density.value = environment.density;
@@ -642,12 +784,21 @@ async function refreshAll() {
   ]);
 
   agents = agentResponse.agents;
+  populateGroupFilterOptions(agents);
   renderSummary(summary);
   renderMap(agents, environmentResponse.environment);
   renderAgents(agents);
   renderChart(agents);
   applyEnvironmentForm(environmentResponse.environment);
 }
+
+applyRosterFiltersButton?.addEventListener("click", applyRosterFilters);
+applyRosterSortButton?.addEventListener("click", applyRosterSort);
+clearRosterFiltersButton?.addEventListener("click", clearRosterFilters);
+rosterSearchInput?.addEventListener("input", applyRosterFilters);
+groupFilterSelect?.addEventListener("change", applyRosterFilters);
+riskFilterSelect?.addEventListener("change", applyRosterFilters);
+sortRosterSelect?.addEventListener("change", applyRosterFilters);
 
 manualForm.addEventListener("submit", async (event) => {
   event.preventDefault();

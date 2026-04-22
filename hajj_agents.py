@@ -97,11 +97,23 @@ class BehaviorEngine:
         llm_action = self._apply_llm_override(environment_data, rule_based_action)
         return llm_action or rule_based_action
 
+
     def _rule_based_decision(self, environment_data: dict) -> str:
         state = self.agent.state
         profile = self.agent.profile
         social = self.agent.memory.social
         hazard = environment_data.get("hazard")
+
+        # --- GROUP COHESION LOGIC ---
+        # If group locations are provided in environment_data, move toward the majority location of the group
+        group_locations = environment_data.get("group_locations")  # Dict[group_id, List[node]]
+        if group_locations and profile.group_id in group_locations:
+            from collections import Counter
+            group_nodes = group_locations[profile.group_id]
+            if group_nodes:
+                most_common_node, _ = Counter(group_nodes).most_common(1)[0]
+                if state.current_node != most_common_node:
+                    return f"MOVE_TO_{most_common_node}"
 
         if state.is_panicking and state.stress < 88.0 and state.hydration > 45.0:
             return "REST"
@@ -172,6 +184,17 @@ class PilgrimAgent:
             stress_gain = max(0.0, stress_gain - 1.0)
         else:
             stress_gain += 2.0
+
+        # --- GROUP DISTANCE STRESS LOGIC ---
+        group_locations = environment_data.get("group_locations")  # Dict[group_id, List[node]]
+        if group_locations and self.profile.group_id in group_locations:
+            from collections import Counter
+            group_nodes = group_locations[self.profile.group_id]
+            if group_nodes:
+                most_common_node, count = Counter(group_nodes).most_common(1)[0]
+                if self.state.current_node != most_common_node:
+                    # Increase stress more if away from group majority
+                    stress_gain += 2.5
 
         if hazard:
             hazard_stress_boost = {

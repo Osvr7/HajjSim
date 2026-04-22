@@ -8,10 +8,12 @@ Start implementing the environment
 Fix the nationality 
 Change the color of the title 
 In the agent roster change the background color based on thier stat for high risk make it red 
-
-#################################################
 fix the density on the map, make it red when more than 50 agents are in the same place
 making the agents placing more realistic
+#################################################
+
+
+
 Today's tasks:
 
 We redesigned the website to match a Makkah/Hajj theme and improved the overall visual quality.

@@ -263,6 +263,42 @@
         <h2>Agent Roster</h2>
         <p>Click an agent card to inspect profile, state, and memory in detail.</p>
       </div>
+      <div class="roster-toolbar" aria-label="Agent roster controls">
+        <label class="toolbar-field">
+          Search
+          <input id="rosterSearchInput" type="search" placeholder="Pilgrim ID, nationality, or group">
+        </label>
+        <label class="toolbar-field">
+          Group
+          <select id="groupFilter">
+            <option value="all">All groups</option>
+          </select>
+        </label>
+        <label class="toolbar-field">
+          Risk Level
+          <select id="riskFilter">
+            <option value="all">All risk levels</option>
+            <option value="stable">Stable</option>
+            <option value="needs_support">Needs support</option>
+            <option value="high_risk">High risk</option>
+            <option value="panicking">Panicking</option>
+          </select>
+        </label>
+        <label class="toolbar-field">
+          Sort By
+          <select id="sortRosterSelect">
+            <option value="default">Default order</option>
+            <option value="stress_desc">Stress: High to low</option>
+            <option value="stress_asc">Stress: Low to high</option>
+            <option value="hydration_desc">Hydration: High to low</option>
+            <option value="hydration_asc">Hydration: Low to high</option>
+          </select>
+        </label>
+        <button id="applyRosterFilters" class="secondary-btn roster-btn" type="button">Filter</button>
+        <button id="applyRosterSort" class="primary-btn roster-btn" type="button">Sort</button>
+        <button id="clearRosterFilters" class="roster-reset-btn roster-btn" type="button">Clear</button>
+        <p id="rosterMeta" class="roster-meta">Showing 0 of 0 pilgrims</p>
+      </div>
       <div id="agentGrid" class="agent-grid"></div>
     </section>
   </div>
