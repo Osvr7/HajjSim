@@ -286,6 +286,20 @@ function getAgentStatus(agent) {
   return deriveOperationalRisk(agent);
 }
 
+function buildPilgrimIcon(status) {
+  return L.divIcon({
+    className: "pilgrim-icon-wrapper",
+    iconSize: [22, 30],
+    iconAnchor: [11, 24],
+    popupAnchor: [0, -20],
+    html:
+      `<div class="pilgrim-marker ${status}">` +
+      `<span class="pilgrim-head"></span>` +
+      `<span class="pilgrim-body"></span>` +
+      `</div>`
+  });
+}
+
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
   const items = [
@@ -350,16 +364,13 @@ function renderMap(currentAgents, environment) {
     const lat = base.lat + jitter(index, 0.0018);
     const lng = base.lng + jitter(index + 11, 0.0022);
 
-    const circle = L.circleMarker([lat, lng], {
-      radius: 6,
-      color: "#ffffff",
-      weight: 1,
-      fillColor: moodColor,
-      fillOpacity: 0.9
+    const marker = L.marker([lat, lng], {
+      icon: buildPilgrimIcon(status),
+      title: agent.profile.pilgrim_id
     });
 
     const hoverStatus = status.replaceAll("_", " ");
-    circle.bindTooltip(
+    marker.bindTooltip(
       `<strong>${agent.profile.pilgrim_id}</strong><br>${agent.profile.nationality}<br>` +
       `Status: ${hoverStatus}<br>Stress: ${agent.state.stress.toFixed(1)}`,
       {
@@ -371,15 +382,15 @@ function renderMap(currentAgents, environment) {
       }
     );
 
-    circle.bindPopup(
+    marker.bindPopup(
       `<strong>${agent.profile.pilgrim_id}</strong><br>${base.label}<br>` +
       `Stress: ${agent.state.stress.toFixed(1)} | Fatigue: ${agent.state.fatigue.toFixed(1)}`
     );
 
-    circle.addTo(mapLayerGroup);
-    circle.on("mouseover", () => circle.openTooltip());
-    circle.on("click", () => {
-      circle.openPopup();
+    marker.addTo(mapLayerGroup);
+    marker.on("mouseover", () => marker.openTooltip());
+    marker.on("click", () => {
+      marker.openPopup();
       scrollToAgent(agent.profile.pilgrim_id);
     });
   });

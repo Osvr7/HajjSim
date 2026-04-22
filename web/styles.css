@@ -285,6 +285,56 @@ button:hover {
 .legend-dot.high { background: #c2402f; }
 .legend-dot.panic { background: #6d3fd1; }
 
+.pilgrim-icon-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.pilgrim-marker {
+  position: relative;
+  width: 22px;
+  height: 30px;
+  transform: translate(-11px, -24px);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.28));
+}
+
+.pilgrim-head {
+  position: absolute;
+  top: 0;
+  left: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f2e7d0;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.pilgrim-body {
+  position: absolute;
+  top: 8px;
+  left: 4px;
+  width: 14px;
+  height: 18px;
+  border-radius: 7px 7px 4px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+}
+
+.pilgrim-marker::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  bottom: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.pilgrim-marker.stable .pilgrim-body { background: #2b865f; }
+.pilgrim-marker.needs_support .pilgrim-body { background: #a67231; }
+.pilgrim-marker.high_risk .pilgrim-body { background: #c2402f; }
+.pilgrim-marker.panicking .pilgrim-body { background: #6d3fd1; }
+
 .chart-panel {
   margin-bottom: 16px;
 }
