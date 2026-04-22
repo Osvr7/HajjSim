@@ -51,3 +51,25 @@ We tuned the simulation logic so panic is harder to trigger and recovery is more
 We aligned frontend and backend risk thresholds so displayed status matches simulation behavior.
 
 We validated the Python files after changes to ensure the code runs correctly.
+
+##
+
+Replaced map dots with custom pilgrim-shaped markers (head/body icon).
+
+Kept marker colors status-based: stable, need support, high risk, panicking.
+
+Added/verified map legend so users can read status colors quickly.
+
+Added hover tooltip and click-to-roster focus flow for each pilgrim.
+
+Expanded and synchronized scenario node options across frontend and backend.
+
+Improved top summary cards with exclusive live categories.
+
+Added scenario-aware metrics (simulation_tick, severity_index).
+
+Fixed unrealistic status distribution by tuning stress/panic dynamics.
+
+Made panic harder to trigger and added stronger recovery behavior (REST, AVOID_CROWD).
+
+Aligned backend and frontend thresholds so statuses match consistently.
