@@ -9,17 +9,17 @@
     "chronic_conditions": ["diabetes"],
     "language": "Bahasa Indonesia",
     "risk_tolerance": 0.25,
-    "initial_node": "Makkah_Airport",
+    "initial_node": "Jeddah_Airport",
     "target_node": "Tawaf_Area",
     "social_memory": {
       "leader_id": "P_002",
       "known_companions": ["P_002"],
       "help_contacts": ["Medical_Desk_1"],
-      "group_last_seen_node": "Makkah_Airport"
+      "group_last_seen_node": "Jeddah_Airport"
     },
     "long_term_memory": {
       "known_routes": {
-        "Tawaf_Area": ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
+        "Tawaf_Area": ["Jeddah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
       },
       "known_hazards": {},
       "learned_preferences": {
@@ -38,17 +38,17 @@
     "chronic_conditions": [],
     "language": "Arabic",
     "risk_tolerance": 0.7,
-    "initial_node": "Makkah_Airport",
+    "initial_node": "Jeddah_Airport",
     "target_node": "Tawaf_Area",
     "social_memory": {
       "leader_id": null,
       "known_companions": ["P_001"],
       "help_contacts": ["Guide_G_102"],
-      "group_last_seen_node": "Makkah_Airport"
+      "group_last_seen_node": "Jeddah_Airport"
     },
     "long_term_memory": {
       "known_routes": {
-        "Tawaf_Area": ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
+        "Tawaf_Area": ["Jeddah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
       },
       "known_hazards": {},
       "learned_preferences": {
@@ -67,17 +67,17 @@
     "chronic_conditions": [],
     "language": "English",
     "risk_tolerance": 0.45,
-    "initial_node": "Makkah_Airport",
+    "initial_node": "Jeddah_Airport",
     "target_node": "Tawaf_Area",
     "social_memory": {
       "leader_id": "Guide_G_880",
       "known_companions": ["P_010", "P_011"],
       "help_contacts": ["Guide_G_880"],
-      "group_last_seen_node": "Makkah_Airport"
+      "group_last_seen_node": "Jeddah_Airport"
     },
     "long_term_memory": {
       "known_routes": {
-        "Tawaf_Area": ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
+        "Tawaf_Area": ["Jeddah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
       },
       "known_hazards": {},
       "learned_preferences": {

@@ -403,10 +403,9 @@ function stopPlayback() {
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
   const currentLocationLabel =
-    siteGps[currentEnvironment?.group_location]?.label ||
     siteGps[summary.leading_current_location]?.label ||
     summary.leading_current_location ||
-    "Jeddah Airport";
+    "None";
 
   const overviewItems = [
     ["Current day", summary.simulation_day_label],
