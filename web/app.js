@@ -1,5 +1,5 @@
 const siteGps = {
-  Makkah_Airport: { lat: 21.6702, lng: 39.1525, label: "Makkah Airport" },
+  Jeddah_Airport: { lat: 21.6702, lng: 39.1525, label: "Jeddah Airport" },
   Pilgrim_Country_Airport: { lat: 24.7136, lng: 46.6753, label: "Pilgrim Country Airport" },
   Makkah_Arrival_Hub: { lat: 21.4858, lng: 39.1925, label: "Makkah Arrival Hub" },
   Kaaba: { lat: 21.4225, lng: 39.8262, label: "Al Kaabah" },
@@ -37,13 +37,13 @@ const siteGps = {
 };
 
 const holyRoutes = [
-  ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area", "Mina_West_Gate", "Mina_Camps_Core", "Arafat_Main_Field", "Muzdalifah_Open_Area", "Jamarat_Complex", "Sacrifice_Zone"],
+  ["Jeddah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area", "Mina_West_Gate", "Mina_Camps_Core", "Arafat_Main_Field", "Muzdalifah_Open_Area", "Jamarat_Complex", "Sacrifice_Zone"],
   ["Mina_Camp_4", "Jamarat_Bridge", "Jamarat_Complex", "Sacrifice_Zone", "Mina_Camps_Core"],
   ["Aziziyah_Zone", "Shade_Corridor", "Transit_Corridor", "Muzdalifah_Open_Area"]
 ];
 
 const initialLocationOptions = [
-  "Makkah_Airport",
+  "Jeddah_Airport",
   "Pilgrim_Country_Airport",
   "Makkah_Arrival_Hub",
   "Masjid_al_Haram_Perimeter",
@@ -87,7 +87,7 @@ const hazardOptions = [
 ];
 
 const groupLocationOptions = [
-  "Makkah_Airport",
+  "Jeddah_Airport",
   "Pilgrim_Country_Airport",
   "Makkah_Arrival_Hub",
   "Mina_Camp_1",
@@ -212,6 +212,7 @@ const startSimulationButton = document.querySelector("#startSimulationButton");
 const pauseSimulationButton = document.querySelector("#pauseSimulationButton");
 const playbackSpeedSelect = document.querySelector("#playbackSpeedSelect");
 const resetDaysButton = document.querySelector("#resetDaysButton");
+const restartDashboardButton = document.querySelector("#restartDashboardButton");
 const analyticsChartCanvas = document.querySelector("#analyticsChart");
 
 let agents = [];
@@ -327,10 +328,10 @@ function populateSelectOptions(formRef, name, options, defaultValue) {
 }
 
 function initializeScenarioOptions() {
-  populateSelectOptions(manualForm, "initial_node", initialLocationOptions, "Makkah_Airport");
+  populateSelectOptions(manualForm, "initial_node", initialLocationOptions, "Jeddah_Airport");
   populateSelectOptions(manualForm, "target_node", targetLocationOptions, "Arafat_Main_Field");
   populateSelectOptions(environmentForm, "hazard", hazardOptions, "none");
-  populateSelectOptions(environmentForm, "group_location", groupLocationOptions, "Makkah_Airport");
+  populateSelectOptions(environmentForm, "group_location", groupLocationOptions, "Jeddah_Airport");
   populateSelectOptions(environmentForm, "alternate_node", alternateNodeOptions, "Cooling_Station_1");
   populateSelectOptions(environmentForm, "panic_node", panicNodeOptions, "Emergency_Point_1");
 }
@@ -401,11 +402,20 @@ function stopPlayback() {
 
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
-  const items = [
+  const currentLocationLabel =
+    siteGps[currentEnvironment?.group_location]?.label ||
+    siteGps[summary.leading_current_location]?.label ||
+    summary.leading_current_location ||
+    "Jeddah Airport";
+
+  const overviewItems = [
     ["Current day", summary.simulation_day_label],
-    ["Current location", siteGps[summary.leading_current_location]?.label || summary.leading_current_location || "None"],
+    ["Current location", currentLocationLabel],
     ["Current ritual", summary.current_ritual || "None"],
-    ["Next ritual", summary.next_ritual || "None"],
+    ["Next ritual", summary.next_ritual || "None"]
+  ];
+
+  const operationsItems = [
     ["Total agents", summary.total_agents],
     ["Stable", summary.stable_agents],
     ["Need support", summary.needs_support_agents],
@@ -417,11 +427,29 @@ function renderSummary(summary) {
     ["Avg hydration", summary.avg_hydration]
   ];
 
-  items.forEach(([label, value]) => {
-    const card = document.createElement("div");
-    card.className = "stat-card";
-    card.innerHTML = `<strong>${value}</strong><span>${label}</span>`;
-    summaryCards.appendChild(card);
+  [
+    ["Summary Overview", overviewItems],
+    ["Operational Snapshot", operationsItems]
+  ].forEach(([title, items]) => {
+    const section = document.createElement("section");
+    section.className = "summary-section";
+    section.innerHTML = `<h3 class="summary-section-title">${title}</h3>`;
+
+    const grid = document.createElement("div");
+    grid.className = "summary-grid";
+
+    items.forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "summary-row";
+      row.innerHTML = `
+        <span class="summary-label">${label}</span>
+        <strong class="summary-value">${value}</strong>
+      `;
+      grid.appendChild(row);
+    });
+
+    section.appendChild(grid);
+    summaryCards.appendChild(section);
   });
 }
 
@@ -448,7 +476,7 @@ function ensureMap() {
 }
 
 function ensureAirportVisible(currentAgents, environment) {
-  if (!map || !siteGps.Makkah_Airport) {
+  if (!map || !siteGps.Jeddah_Airport) {
     return;
   }
 
@@ -468,11 +496,11 @@ function ensureAirportVisible(currentAgents, environment) {
     return;
   }
 
-  const airportLatLng = L.latLng(siteGps.Makkah_Airport.lat, siteGps.Makkah_Airport.lng);
+  const airportLatLng = L.latLng(siteGps.Jeddah_Airport.lat, siteGps.Jeddah_Airport.lng);
   const routeBounds = L.latLngBounds(routePoints);
   const airportIsActive =
-    environment?.group_location === "Makkah_Airport" ||
-    currentAgents.some((agent) => agent.state.current_node === "Makkah_Airport");
+    environment?.group_location === "Jeddah_Airport" ||
+    currentAgents.some((agent) => agent.state.current_node === "Jeddah_Airport");
 
   if (!mapHasInitialFit || (airportIsActive && !map.getBounds().pad(-0.08).contains(airportLatLng))) {
     map.fitBounds(routeBounds, {
@@ -788,10 +816,10 @@ function renderAgents(currentAgents) {
     const ritualSchedule = agent.memory.long_term.ritual_schedule || [];
     const completedRitualCount = ritualSchedule.filter((step) => ritualProgress.includes(step.progress_key)).length;
     detailGrid.innerHTML = [
-      detailBlock("Current day", agent.state.ritual_day_label || "Upon Arrival in Makkah"),
+      detailBlock("Current day", agent.state.ritual_day_label || "Upon Arrival in Jeddah"),
       detailBlock("Current ritual", agent.state.current_ritual || "Not Started"),
       detailBlock("Next ritual", agent.state.next_ritual || "Tawaf Al-Qudoum (Arrival Tawaf)"),
-      detailBlock("Next ritual day", agent.state.next_ritual_day_label || "Upon Arrival in Makkah"),
+      detailBlock("Next ritual day", agent.state.next_ritual_day_label || "Upon Arrival in Jeddah"),
       detailBlock("Schedule status", agent.state.ritual_window_open ? "Ready on this tick" : "Waiting for next tick"),
       detailBlock("Current location", siteGps[agent.state.current_node]?.label || agent.state.current_node),
       detailBlock("Ritual location", siteGps[agent.state.target_node]?.label || agent.state.target_node),
@@ -978,7 +1006,7 @@ function resetManualDefaults() {
   manualForm.language.value = "Arabic";
   manualForm.mobility.value = "0.90";
   manualForm.risk_tolerance.value = "0.5";
-  manualForm.initial_node.value = "Makkah_Airport";
+  manualForm.initial_node.value = "Jeddah_Airport";
   manualForm.target_node.value = "Arafat_Main_Field";
   manualForm.elements.performs_sacrifice.checked = true;
   const chronicConditions = manualForm.elements.chronic_conditions;
@@ -1208,6 +1236,19 @@ resetDaysButton?.addEventListener("click", async () => {
     body: JSON.stringify({})
   });
 
+  await refreshAll();
+});
+
+restartDashboardButton?.addEventListener("click", async () => {
+  stopPlayback();
+  await fetchJson("/api/dashboard/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+
+  resetManualDefaults();
+  clearRosterFilters();
   await refreshAll();
 });
 

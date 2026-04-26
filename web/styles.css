@@ -1,17 +1,17 @@
 :root {
-  --bg-sand: #efe6d3;
-  --bg-warm: #dbc79e;
-  --bg-olive: #8c9c7d;
-  --panel: rgba(255, 249, 237, 0.48);
-  --panel-strong: rgba(255, 249, 237, 0.44);
-  --ink: #222d2a;
-  --muted: #39453f;
-  --line: rgba(34, 45, 42, 0.22);
-  --brand: #1f6f52;
-  --brand-dark: #164f3a;
-  --accent: #b67a2f;
+  --bg-mint: #edf8f0;
+  --bg-sage: #dceee1;
+  --bg-white: #fbfefc;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-strong: rgba(245, 251, 247, 0.92);
+  --ink: #1f352a;
+  --muted: #4d6659;
+  --line: rgba(45, 92, 68, 0.16);
+  --brand: #2e7d5a;
+  --brand-dark: #1c5b40;
+  --accent: #6ba883;
   --alert: #b53a2f;
-  --shadow: 0 20px 42px rgba(59, 48, 27, 0.15);
+  --shadow: 0 20px 42px rgba(64, 108, 82, 0.12);
 }
 
 * {
@@ -24,9 +24,9 @@ body {
   font-family: "Tajawal", sans-serif;
   color: var(--ink);
   background:
-    linear-gradient(rgba(20, 24, 19, 0.2), rgba(20, 24, 19, 0.24)),
-    url("./free-photo-of-night-view-of-kaaba-in-masjid-al-haram-makkah.jpeg") center/cover no-repeat fixed,
-    url("https://upload.wikimedia.org/wikipedia/commons/3/35/Kaaba_Masjid_Haraam_Makkah.jpg") center/cover no-repeat fixed;
+    radial-gradient(circle at top left, rgba(140, 198, 158, 0.16), transparent 30%),
+    radial-gradient(circle at top right, rgba(196, 228, 205, 0.7), transparent 34%),
+    linear-gradient(180deg, var(--bg-white) 0%, var(--bg-mint) 48%, var(--bg-sage) 100%);
 }
 
 body::before {
@@ -35,10 +35,10 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(239, 230, 211, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(239, 230, 211, 0.04) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: radial-gradient(circle at center, black 24%, transparent 90%);
+    linear-gradient(rgba(46, 125, 90, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 125, 90, 0.035) 1px, transparent 1px);
+  background-size: 30px 30px;
+  mask-image: radial-gradient(circle at center, black 20%, transparent 88%);
 }
 
 .page-shell {
@@ -48,10 +48,13 @@ body::before {
 }
 
 .hero {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 16px;
+  display: block;
   margin-bottom: 18px;
+}
+
+.hero-content {
+  display: grid;
+  gap: 16px;
 }
 
 .eyebrow {
@@ -60,8 +63,8 @@ body::before {
   font-size: 0.78rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #f0e3c1;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+  color: #2f6b4f;
+  text-shadow: 0 1px 6px rgba(255, 255, 255, 0.18);
 }
 
 h1,
@@ -75,8 +78,8 @@ h1 {
   font-size: clamp(2rem, 3.8vw, 3.6rem);
   line-height: 0.95;
   margin-bottom: 12px;
-  color: #fff4d8;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.52);
+  color: #1c5b40;
+  text-shadow: 0 3px 12px rgba(255, 255, 255, 0.24);
 }
 
 h2,
@@ -102,29 +105,75 @@ button {
 }
 
 .hero-copy {
-  color: #f2e8d1;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.42);
+  color: #446454;
+  text-shadow: none;
 }
 
 .hero-stats,
 .panel {
   background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.68);
   border-radius: 22px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(2px) saturate(110%);
+  backdrop-filter: blur(8px) saturate(115%);
 }
 
 .hero-stats {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
-  padding: 14px;
+  gap: 12px;
+  padding: 10px 0 0;
   align-content: start;
 }
 
+.summary-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(239, 248, 242, 0.78));
+  box-shadow: 0 10px 28px rgba(64, 108, 82, 0.08);
+}
+
+.summary-section-title {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--brand-dark);
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(45, 92, 68, 0.12);
+}
+
+.summary-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid rgba(45, 92, 68, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.summary-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.summary-value {
+  color: var(--brand-dark);
+  font-size: 0.9rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .stat-card {
-  background: rgba(255, 255, 255, 0.5);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 248, 242, 0.88));
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px;
@@ -179,7 +228,7 @@ label {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.42);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(235, 246, 238, 0.78));
 }
 
 .toggle-field input {
@@ -194,7 +243,7 @@ select {
   padding: 11px 12px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.88);
   color: var(--ink);
   font-family: inherit;
 }
@@ -224,15 +273,15 @@ button:hover {
 }
 
 .secondary-btn {
-  background: linear-gradient(135deg, #7a6435 0%, var(--accent) 100%);
+  background: linear-gradient(135deg, #5e9272 0%, var(--accent) 100%);
   color: white;
-  box-shadow: 0 12px 28px rgba(122, 100, 53, 0.25);
+  box-shadow: 0 12px 28px rgba(69, 126, 92, 0.23);
 }
 
 .accent-btn {
-  background: linear-gradient(135deg, #145e88 0%, #1c86ba 100%);
+  background: linear-gradient(135deg, #2d8c65 0%, #58b383 100%);
   color: white;
-  box-shadow: 0 12px 28px rgba(20, 94, 136, 0.28);
+  box-shadow: 0 12px 28px rgba(45, 140, 101, 0.24);
 }
 
 .divider {
@@ -278,9 +327,9 @@ button:hover {
   bottom: 12px;
   z-index: 500;
   min-width: 170px;
-  background: rgba(22, 30, 26, 0.84);
-  color: #efe6d3;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(28, 76, 55, 0.88);
+  color: #f4fbf6;
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 12px;
   padding: 10px 12px;
   backdrop-filter: blur(4px);
@@ -288,7 +337,7 @@ button:hover {
 
 .map-legend h3 {
   margin: 0 0 8px;
-  color: #f8e7be;
+  color: #ffffff;
   font-size: 0.88rem;
 }
 
@@ -386,7 +435,7 @@ button:hover {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: rgba(255, 249, 237, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(237, 247, 240, 0.8));
 }
 
 .toolbar-field {
@@ -416,7 +465,7 @@ button:hover {
   padding: 18px;
   border-radius: 18px;
   border: 1px dashed var(--line);
-  background: rgba(255, 249, 237, 0.38);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(239, 248, 242, 0.76));
   color: var(--muted);
   font-weight: 700;
   text-align: center;
@@ -539,7 +588,7 @@ button:hover {
 .detail-item {
   border-radius: 13px;
   padding: 9px 11px;
-  background: rgba(226, 212, 181, 0.58);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(234, 245, 238, 0.84));
 }
 
 .mini-stat strong,
@@ -580,6 +629,10 @@ button:hover {
   .grid.two,
   .detail-grid,
   .mini-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 

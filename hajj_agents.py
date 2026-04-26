@@ -25,7 +25,7 @@ class SimulationDaySlot:
 HAJJ_DAY_SLOTS: Tuple[SimulationDaySlot, ...] = (
     SimulationDaySlot(
         day_index=0,
-        label="Upon Arrival in Makkah",
+        label="Upon Arrival in Jeddah",
         rituals=("Tawaf Al-Qudoum (Arrival Tawaf)",),
     ),
     SimulationDaySlot(
@@ -84,7 +84,7 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
     RitualStep(
         sequence_order=1,
         scheduled_day_index=0,
-        scheduled_day_label="Upon Arrival in Makkah",
+        scheduled_day_label="Upon Arrival in Jeddah",
         ritual_name="Tawaf Al-Qudoum (Arrival Tawaf)",
         target_node="Tawaf_Area",
         progress_key="tawaf_qudoum_complete",
@@ -195,7 +195,7 @@ OPTIONAL_RITUAL_PROGRESS_KEYS = {"sacrifice_complete"}
 
 
 ROUTE_SEGMENTS: Tuple[Tuple[str, ...], ...] = (
-    ("Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter"),
+    ("Jeddah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter"),
     ("Kaaba", "Tawaf_Area", "Masjid_al_Haram_Perimeter", "Sai_Corridor"),
     ("Masjid_al_Haram_Perimeter", "Makkah_Bus_Station", "Aziziyah_Zone"),
     ("Aziziyah_Zone", "Mina_West_Gate", "Mina_Camp_1", "Mina_Camps_Core", "Mina_Camp_2", "Mina_Camp_4", "Mina_East_Gate"),
@@ -211,8 +211,8 @@ ROUTE_SEGMENTS: Tuple[Tuple[str, ...], ...] = (
 )
 
 RITUAL_APPROACH_STARTS: Dict[str, str] = {
-    "origin_airport_complete": "Makkah_Airport",
-    "tawaf_qudoum_complete": "Makkah_Airport",
+    "origin_airport_complete": "Jeddah_Airport",
+    "tawaf_qudoum_complete": "Jeddah_Airport",
     "mina_tarwiyah_complete": "Tawaf_Area",
     "arafah_complete": "Mina_Camps_Core",
     "muzdalifah_complete": "Arafat_Main_Field",
@@ -445,10 +445,10 @@ class DynamicState:
     last_action: str = "idle"
     simulation_tick: int = 0
     ritual_day_index: int = -1
-    ritual_day_label: str = "Upon Arrival in Makkah"
+    ritual_day_label: str = "Upon Arrival in Jeddah"
     current_ritual: str = "Not Started"
     next_ritual: str = "Tawaf Al-Qudoum (Arrival Tawaf)"
-    next_ritual_day_label: str = "Upon Arrival in Makkah"
+    next_ritual_day_label: str = "Upon Arrival in Jeddah"
     ritual_window_open: bool = False
     active_route: List[str] = field(default_factory=list)
 
@@ -1014,10 +1014,10 @@ class AgentFactory:
         ("Moroccan", "Arabic"),
     )
     DEFAULT_INITIAL_NODES: Sequence[str] = (
-        "Makkah_Airport",
+        "Jeddah_Airport",
     )
     DEFAULT_TARGET_NODES: Sequence[str] = (
-        "Makkah_Airport",
+        "Jeddah_Airport",
         "Makkah_Arrival_Hub",
         "Tawaf_Area",
         "Sai_Corridor",

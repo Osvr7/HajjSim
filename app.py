@@ -25,7 +25,7 @@ class EnvironmentState:
     density: float = 5.0
     temperature: float = 37.0
     hazard: str = "none"
-    group_location: str = "Makkah_Airport"
+    group_location: str = "Jeddah_Airport"
     alternate_node: str = "Shade_Corridor"
     panic_node: str = "Emergency_Point"
     tick: int = -1
@@ -51,7 +51,7 @@ class EnvironmentState:
         self.density = 5.0
         self.temperature = 37.0
         self.hazard = "none"
-        self.group_location = "Makkah_Airport"
+        self.group_location = "Jeddah_Airport"
         self.alternate_node = "Shade_Corridor"
         self.panic_node = "Emergency_Point"
         self.tick = -1
@@ -175,6 +175,9 @@ class AgentRepository:
         for agent in self.agents.values():
             agent.reset_ritual_cycle()
 
+    def reset_all(self) -> None:
+        self.load()
+
     def _advance_index(self, pilgrim_id: str) -> None:
         digits = "".join(char for char in pilgrim_id if char.isdigit())
         if digits:
@@ -285,6 +288,13 @@ def update_summary_history() -> dict:
     return summary
 
 
+def reset_dashboard_state() -> dict:
+    ENVIRONMENT.reset()
+    REPOSITORY.reset_all()
+    SUMMARY_HISTORY.clear()
+    return update_summary_history()
+
+
 update_summary_history()
 
 
@@ -358,6 +368,18 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             summary = update_summary_history()
             self._send_json(
                 {
+                    "environment": ENVIRONMENT.to_dict(),
+                    "summary": summary,
+                    "history": SUMMARY_HISTORY,
+                }
+            )
+            return
+
+        if parsed.path == "/api/dashboard/reset":
+            summary = reset_dashboard_state()
+            self._send_json(
+                {
+                    "agents": REPOSITORY.list_agents(),
                     "environment": ENVIRONMENT.to_dict(),
                     "summary": summary,
                     "history": SUMMARY_HISTORY,
