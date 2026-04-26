@@ -208,11 +208,15 @@ const environmentDayLabel = document.querySelector("#environmentDayLabel");
 const environmentLocationLabel = document.querySelector("#environmentLocationLabel");
 const environmentRitualLabel = document.querySelector("#environmentRitualLabel");
 const environmentNextRitualLabel = document.querySelector("#environmentNextRitualLabel");
+const startSimulationButton = document.querySelector("#startSimulationButton");
+const pauseSimulationButton = document.querySelector("#pauseSimulationButton");
+const playbackSpeedSelect = document.querySelector("#playbackSpeedSelect");
 const resetDaysButton = document.querySelector("#resetDaysButton");
 const analyticsChartCanvas = document.querySelector("#analyticsChart");
 
 let agents = [];
 let map;
+let siteLayerGroup;
 let mapLayerGroup;
 let routeLayerGroup;
 let heatLayer;
@@ -221,6 +225,9 @@ let agentMarkers = new Map();
 let currentEnvironment = null;
 let summaryHistory = [];
 let mapHasInitialFit = false;
+let playbackTimer = null;
+let simulationBusy = false;
+let routeLayersReady = false;
 
 const rosterFilters = {
   searchQuery: "",
@@ -371,6 +378,27 @@ function buildPilgrimIcon(status) {
   });
 }
 
+function getPlaybackDelay() {
+  return Number(playbackSpeedSelect?.value || 800);
+}
+
+function setPlaybackState(isPlaying) {
+  if (startSimulationButton) {
+    startSimulationButton.disabled = isPlaying;
+  }
+  if (pauseSimulationButton) {
+    pauseSimulationButton.disabled = !isPlaying;
+  }
+}
+
+function stopPlayback() {
+  if (playbackTimer) {
+    clearInterval(playbackTimer);
+    playbackTimer = null;
+  }
+  setPlaybackState(false);
+}
+
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
   const items = [
@@ -413,7 +441,10 @@ function ensureMap() {
   }).addTo(map);
 
   routeLayerGroup = L.layerGroup().addTo(map);
+  siteLayerGroup = L.layerGroup().addTo(map);
   mapLayerGroup = L.layerGroup().addTo(map);
+  renderRoutes();
+  renderSiteMarkers();
 }
 
 function ensureAirportVisible(currentAgents, environment) {
@@ -454,65 +485,17 @@ function ensureAirportVisible(currentAgents, environment) {
 
 function renderMap(currentAgents, environment) {
   ensureMap();
-  routeLayerGroup.clearLayers();
-  mapLayerGroup.clearLayers();
-  agentMarkers = new Map();
-  renderRoutes();
   const visibleAgents = getDisplayedAgents(currentAgents);
   renderHeatmap(visibleAgents, environment);
-
-  Object.entries(siteGps).forEach(([nodeId, site]) => {
-    const marker = L.marker([site.lat, site.lng], { title: site.label });
-    marker.bindTooltip(site.label, { direction: "top" });
-    marker.addTo(mapLayerGroup);
-    marker.on("click", () => focusNodeAgents(nodeId));
-  });
-
-  visibleAgents.forEach((agent, index) => {
-    const node = agent.state.current_node;
-    const base = siteGps[node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
-    const status = getAgentStatus(agent);
-    const moodColor = STATUS_COLORS[status] || STATUS_COLORS.stable;
-
-    const lat = base.lat + jitter(index, 0.0018);
-    const lng = base.lng + jitter(index + 11, 0.0022);
-
-    const marker = L.marker([lat, lng], {
-      icon: buildPilgrimIcon(status),
-      title: agent.profile.pilgrim_id
-    });
-
-    const hoverStatus = status.replaceAll("_", " ");
-    marker.bindTooltip(
-      `<strong>${agent.profile.pilgrim_id}</strong><br>${agent.profile.nationality}<br>` +
-      `Status: ${hoverStatus}<br>Stress: ${agent.state.stress.toFixed(1)}`,
-      {
-        direction: "top",
-        offset: [0, -8],
-        opacity: 0.95,
-        sticky: true,
-        className: "agent-hover-tooltip"
-      }
-    );
-
-    marker.bindPopup(
-      `<strong>${agent.profile.pilgrim_id}</strong><br>${base.label}<br>` +
-      `Stress: ${agent.state.stress.toFixed(1)} | Fatigue: ${agent.state.fatigue.toFixed(1)}`
-    );
-
-    marker.addTo(mapLayerGroup);
-    agentMarkers.set(agent.profile.pilgrim_id, marker);
-    marker.on("mouseover", () => marker.openTooltip());
-    marker.on("click", () => {
-      marker.openPopup();
-      scrollToAgent(agent.profile.pilgrim_id);
-    });
-  });
+  renderAgentMarkers(visibleAgents);
 
   ensureAirportVisible(currentAgents, environment);
 }
 
 function renderRoutes() {
+  if (routeLayersReady) {
+    return;
+  }
   holyRoutes.forEach((route, idx) => {
     const points = route
       .map((nodeId) => siteGps[nodeId])
@@ -532,6 +515,97 @@ function renderRoutes() {
     });
     polyline.bindTooltip(`Route ${idx + 1}`, { sticky: true });
     polyline.addTo(routeLayerGroup);
+  });
+  routeLayersReady = true;
+}
+
+function renderSiteMarkers() {
+  siteLayerGroup.clearLayers();
+  Object.entries(siteGps).forEach(([nodeId, site]) => {
+    const marker = L.marker([site.lat, site.lng], { title: site.label });
+    marker.bindTooltip(site.label, { direction: "top" });
+    marker.addTo(siteLayerGroup);
+    marker.on("click", () => focusNodeAgents(nodeId));
+  });
+}
+
+function getMarkerLatLng(agent, index) {
+  const node = agent.state.current_node;
+  const base = siteGps[node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
+  return L.latLng(
+    base.lat + jitter(index, 0.0018),
+    base.lng + jitter(index + 11, 0.0022)
+  );
+}
+
+function animateMarkerTo(marker, targetLatLng, duration = 420) {
+  const start = marker.getLatLng();
+  const startTime = performance.now();
+
+  function step(now) {
+    const progress = Math.min((now - startTime) / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const lat = start.lat + (targetLatLng.lat - start.lat) * eased;
+    const lng = start.lng + (targetLatLng.lng - start.lng) * eased;
+    marker.setLatLng([lat, lng]);
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    }
+  }
+
+  requestAnimationFrame(step);
+}
+
+function renderAgentMarkers(visibleAgents) {
+  const visibleIds = new Set(visibleAgents.map((agent) => agent.profile.pilgrim_id));
+  agentMarkers.forEach((marker, agentId) => {
+    if (!visibleIds.has(agentId)) {
+      mapLayerGroup.removeLayer(marker);
+      agentMarkers.delete(agentId);
+    }
+  });
+
+  visibleAgents.forEach((agent, index) => {
+    const node = agent.state.current_node;
+    const base = siteGps[node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
+    const status = getAgentStatus(agent);
+    const latLng = getMarkerLatLng(agent, index);
+    const hoverStatus = status.replaceAll("_", " ");
+    const popupHtml =
+      `<strong>${agent.profile.pilgrim_id}</strong><br>${base.label}<br>` +
+      `Stress: ${agent.state.stress.toFixed(1)} | Fatigue: ${agent.state.fatigue.toFixed(1)}`;
+    const tooltipHtml =
+      `<strong>${agent.profile.pilgrim_id}</strong><br>${agent.profile.nationality}<br>` +
+      `Status: ${hoverStatus}<br>Stress: ${agent.state.stress.toFixed(1)}`;
+
+    let marker = agentMarkers.get(agent.profile.pilgrim_id);
+    if (!marker) {
+      marker = L.marker(latLng, {
+        icon: buildPilgrimIcon(status),
+        title: agent.profile.pilgrim_id
+      });
+      marker.bindTooltip(tooltipHtml, {
+        direction: "top",
+        offset: [0, -8],
+        opacity: 0.95,
+        sticky: true,
+        className: "agent-hover-tooltip"
+      });
+      marker.bindPopup(popupHtml);
+      marker.addTo(mapLayerGroup);
+      marker.on("mouseover", () => marker.openTooltip());
+      marker.on("click", () => {
+        marker.openPopup();
+        scrollToAgent(agent.profile.pilgrim_id);
+      });
+      agentMarkers.set(agent.profile.pilgrim_id, marker);
+      return;
+    }
+
+    marker.setIcon(buildPilgrimIcon(status));
+    marker.setTooltipContent(tooltipHtml);
+    marker.setPopupContent(popupHtml);
+    animateMarkerTo(marker, latLng);
   });
 }
 
@@ -712,6 +786,7 @@ function renderAgents(currentAgents) {
     const detailGrid = fragment.querySelector(".detail-grid");
     const ritualProgress = agent.memory.long_term.ritual_progress || [];
     const ritualSchedule = agent.memory.long_term.ritual_schedule || [];
+    const completedRitualCount = ritualSchedule.filter((step) => ritualProgress.includes(step.progress_key)).length;
     detailGrid.innerHTML = [
       detailBlock("Current day", agent.state.ritual_day_label || "Upon Arrival in Makkah"),
       detailBlock("Current ritual", agent.state.current_ritual || "Not Started"),
@@ -723,8 +798,9 @@ function renderAgents(currentAgents) {
       detailBlock("Group", agent.profile.group_id),
       detailBlock("Mobility", agent.profile.mobility),
       detailBlock("Language", agent.profile.language),
+      detailBlock("Sacrifice", agent.profile.performs_sacrifice ? "Participating" : "Optional skip"),
       detailBlock("Fatigue", agent.state.fatigue.toFixed(1)),
-      detailBlock("Ritual progress", `${ritualProgress.length}/${ritualSchedule.length || 0} complete`),
+      detailBlock("Ritual progress", `${completedRitualCount}/${ritualSchedule.length || 0} complete`),
       detailBlock("Memory", (agent.memory.short_term.recent_nodes || []).join(", ") || "Fresh agent"),
       detailBlock("Conditions", (agent.profile.chronic_conditions || []).join(", ") || "None")
     ].join("");
@@ -885,6 +961,7 @@ function getManualPayload() {
   const data = new FormData(manualForm);
   const payload = Object.fromEntries(data.entries());
   payload.chronic_conditions = data.getAll("chronic_conditions").filter(Boolean);
+  payload.performs_sacrifice = manualForm.elements.performs_sacrifice.checked;
   return payload;
 }
 
@@ -903,6 +980,7 @@ function resetManualDefaults() {
   manualForm.risk_tolerance.value = "0.5";
   manualForm.initial_node.value = "Makkah_Airport";
   manualForm.target_node.value = "Arafat_Main_Field";
+  manualForm.elements.performs_sacrifice.checked = true;
   const chronicConditions = manualForm.elements.chronic_conditions;
   if (chronicConditions) {
     [...chronicConditions.options].forEach((option) => {
@@ -1035,6 +1113,38 @@ async function refreshAll() {
   applyEnvironmentForm(environmentResponse.environment);
 }
 
+async function runSimulationStep() {
+  if (simulationBusy) {
+    return;
+  }
+
+  simulationBusy = true;
+  try {
+    await fetchJson("/api/simulate/step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(getEnvironmentPayload())
+    });
+    await refreshAll();
+  } finally {
+    simulationBusy = false;
+  }
+}
+
+function startPlayback() {
+  if (playbackTimer) {
+    clearInterval(playbackTimer);
+  }
+
+  setPlaybackState(true);
+  playbackTimer = setInterval(() => {
+    runSimulationStep().catch((error) => {
+      stopPlayback();
+      summaryCards.innerHTML = `<div class="stat-card"><strong>Error</strong><span>${error.message}</span></div>`;
+    });
+  }, getPlaybackDelay());
+}
+
 applyRosterFiltersButton?.addEventListener("click", applyRosterFilters);
 applyRosterSortButton?.addEventListener("click", applyRosterSort);
 clearRosterFiltersButton?.addEventListener("click", clearRosterFilters);
@@ -1073,18 +1183,25 @@ randomForm.addEventListener("submit", async (event) => {
 
 environmentForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const payload = getEnvironmentPayload();
+  await runSimulationStep();
+});
 
-  await fetchJson("/api/simulate/step", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+startSimulationButton?.addEventListener("click", () => {
+  startPlayback();
+});
 
-  await refreshAll();
+pauseSimulationButton?.addEventListener("click", () => {
+  stopPlayback();
+});
+
+playbackSpeedSelect?.addEventListener("change", () => {
+  if (playbackTimer) {
+    startPlayback();
+  }
 });
 
 resetDaysButton?.addEventListener("click", async () => {
+  stopPlayback();
   await fetchJson("/api/simulate/reset", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1094,6 +1211,7 @@ resetDaysButton?.addEventListener("click", async () => {
   await refreshAll();
 });
 
+setPlaybackState(false);
 refreshAll().catch((error) => {
   summaryCards.innerHTML = `<div class="stat-card"><strong>Error</strong><span>${error.message}</span></div>`;
 });

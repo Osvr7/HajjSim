@@ -145,6 +145,7 @@ class AgentRepository:
             language=payload.get("language", "Arabic"),
             chronic_conditions=chronic_conditions,
             risk_tolerance=float(payload.get("risk_tolerance", 0.5)),
+            performs_sacrifice=self._parse_bool(payload.get("performs_sacrifice", True)),
         )
         self.agents[agent.profile.pilgrim_id] = agent
         self._advance_index(agent.profile.pilgrim_id)
@@ -188,6 +189,14 @@ class AgentRepository:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return []
+
+    @staticmethod
+    def _parse_bool(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
 
 def derive_operational_status(agent: dict) -> str:

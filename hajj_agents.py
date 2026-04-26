@@ -191,6 +191,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
     ),
 )
 
+OPTIONAL_RITUAL_PROGRESS_KEYS = {"sacrifice_complete"}
+
 
 ROUTE_SEGMENTS: Tuple[Tuple[str, ...], ...] = (
     ("Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter"),
@@ -230,26 +232,41 @@ def get_simulation_day_slot(day_index: int) -> SimulationDaySlot:
     return HAJJ_DAY_SLOTS[bounded_index]
 
 
-def get_pending_ritual_step(ritual_progress: Sequence[str]) -> Optional[RitualStep]:
+def get_pending_ritual_step(
+    ritual_progress: Sequence[str],
+    ritual_schedule: Optional[Sequence[dict]] = None,
+) -> Optional[RitualStep]:
     completed = set(ritual_progress)
-    for step in HAJJ_RITUAL_SCHEDULE:
+    schedule_steps = ritual_schedule or get_ritual_schedule_payload()
+    for raw_step in schedule_steps:
+        step = ritual_step_from_payload(raw_step)
         if step.progress_key not in completed:
             return step
     return None
 
 
-def get_completed_ritual_steps(ritual_progress: Sequence[str]) -> List[RitualStep]:
+def get_completed_ritual_steps(
+    ritual_progress: Sequence[str],
+    ritual_schedule: Optional[Sequence[dict]] = None,
+) -> List[RitualStep]:
     completed = set(ritual_progress)
-    return [step for step in HAJJ_RITUAL_SCHEDULE if step.progress_key in completed]
+    schedule_steps = ritual_schedule or get_ritual_schedule_payload()
+    steps = [ritual_step_from_payload(raw_step) for raw_step in schedule_steps]
+    return [step for step in steps if step.progress_key in completed]
 
 
-def get_following_ritual_step(ritual_progress: Sequence[str]) -> Optional[RitualStep]:
-    pending_step = get_pending_ritual_step(ritual_progress)
+def get_following_ritual_step(
+    ritual_progress: Sequence[str],
+    ritual_schedule: Optional[Sequence[dict]] = None,
+) -> Optional[RitualStep]:
+    schedule_steps = ritual_schedule or get_ritual_schedule_payload()
+    pending_step = get_pending_ritual_step(ritual_progress, schedule_steps)
     if pending_step is None:
         return None
 
     found_pending = False
-    for step in HAJJ_RITUAL_SCHEDULE:
+    for raw_step in schedule_steps:
+        step = ritual_step_from_payload(raw_step)
         if found_pending:
             return step
         if step.progress_key == pending_step.progress_key:
@@ -257,7 +274,7 @@ def get_following_ritual_step(ritual_progress: Sequence[str]) -> Optional[Ritual
     return None
 
 
-def get_ritual_schedule_payload() -> List[dict]:
+def get_ritual_schedule_payload(include_optional_rituals: bool = True) -> List[dict]:
     return [
         {
             "sequence_order": step.sequence_order,
@@ -269,7 +286,20 @@ def get_ritual_schedule_payload() -> List[dict]:
             "description": step.description,
         }
         for step in HAJJ_RITUAL_SCHEDULE
+        if include_optional_rituals or step.progress_key not in OPTIONAL_RITUAL_PROGRESS_KEYS
     ]
+
+
+def ritual_step_from_payload(step_payload: dict) -> RitualStep:
+    return RitualStep(
+        sequence_order=int(step_payload["sequence_order"]),
+        scheduled_day_index=int(step_payload["scheduled_day_index"]),
+        scheduled_day_label=step_payload["scheduled_day_label"],
+        ritual_name=step_payload["ritual_name"],
+        target_node=step_payload["target_node"],
+        progress_key=step_payload["progress_key"],
+        description=step_payload["description"],
+    )
 
 
 def get_simulation_day_payload() -> List[dict]:
@@ -396,6 +426,7 @@ class StaticProfile:
     chronic_conditions: Tuple[str, ...] = field(default_factory=tuple)
     language: str = "Arabic"
     risk_tolerance: float = 0.5
+    performs_sacrifice: bool = True
 
 
 # ==========================================
@@ -538,6 +569,7 @@ class PilgrimAgent:
         self.state = DynamicState(current_node=initial_node, target_node=target_node)
         self.memory = Memory()
         self.brain = BehaviorEngine(self, llm_override=llm_override)
+        self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
         self._sync_ritual_goal({"simulation_ritual_index": -1})
 
     def step(self, environment_data: dict) -> str:
@@ -559,6 +591,7 @@ class PilgrimAgent:
         self.memory.long_term.ritual_progress = preserved_progress
         self.state.current_node = self.start_node
         self.state.active_route = [self.start_node]
+        self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
         self._sync_ritual_goal({"simulation_ritual_index": -1})
         self.memory.short_term.remember_event("Ritual schedule reset to start")
 
@@ -573,9 +606,10 @@ class PilgrimAgent:
                 environment_data.get("ritual_day_index", 0),
             )
         )
+        self._mark_skipped_optional_rituals(simulation_ritual_index)
 
         if simulation_ritual_index < 0:
-            first_step = HAJJ_RITUAL_SCHEDULE[0]
+            first_step = ritual_step_from_payload(self.memory.long_term.ritual_schedule[0])
             self.state.ritual_day_index = -1
             self.state.ritual_day_label = first_step.scheduled_day_label
             self.state.current_ritual = "Not Started"
@@ -594,8 +628,18 @@ class PilgrimAgent:
             self.state.ritual_window_open = False
             self.state.active_route = []
         else:
-            step = get_simulation_ritual_step(simulation_ritual_index)
-            following_step = get_next_simulation_ritual_step(simulation_ritual_index)
+            step = self._get_applicable_step_for_tick(simulation_ritual_index)
+            following_step = self._get_next_applicable_step_for_tick(simulation_ritual_index)
+            if step is None:
+                self.state.ritual_day_label = "Completed"
+                self.state.current_ritual = "Hajj Complete"
+                self.state.next_ritual = "Completed"
+                self.state.next_ritual_day_label = "Completed"
+                self.state.target_node = self.state.current_node
+                self.state.ritual_window_open = False
+                self.state.active_route = []
+                self.state.ritual_day_index = len(self.memory.long_term.ritual_schedule) - 1
+                return
             self.state.ritual_window_open = True
             self.state.ritual_day_index = step.sequence_order - 1
             self.state.ritual_day_label = build_ritual_day_label(step)
@@ -605,7 +649,7 @@ class PilgrimAgent:
             self.state.next_ritual_day_label = following_step.scheduled_day_label if following_step else "Completed"
 
         if not self.memory.long_term.ritual_schedule:
-            self.memory.long_term.ritual_schedule = get_ritual_schedule_payload()
+            self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
 
     def _mark_completed_rituals_before_current_tick(self, environment_data: dict) -> None:
         simulation_ritual_index = int(
@@ -617,6 +661,8 @@ class PilgrimAgent:
         for step in HAJJ_RITUAL_SCHEDULE:
             if (step.sequence_order - 1) >= simulation_ritual_index:
                 break
+            if self._should_skip_step(step):
+                continue
             if step.progress_key not in self.memory.long_term.ritual_progress:
                 self.memory.long_term.ritual_progress.append(step.progress_key)
 
@@ -624,7 +670,10 @@ class PilgrimAgent:
         if not self.state.ritual_window_open:
             return
         if environment_data is None:
-            step = get_pending_ritual_step(self.memory.long_term.ritual_progress)
+            step = get_pending_ritual_step(
+                self.memory.long_term.ritual_progress,
+                self.memory.long_term.ritual_schedule,
+            )
         else:
             simulation_ritual_index = int(
                 environment_data.get(
@@ -634,7 +683,7 @@ class PilgrimAgent:
             )
             if simulation_ritual_index < 0 or simulation_ritual_index >= len(HAJJ_RITUAL_SCHEDULE):
                 return
-            step = get_simulation_ritual_step(simulation_ritual_index)
+            step = self._get_applicable_step_for_tick(simulation_ritual_index)
         if step is None:
             return
         if self.state.current_node != step.target_node:
@@ -643,6 +692,45 @@ class PilgrimAgent:
             return
         self.memory.long_term.ritual_progress.append(step.progress_key)
         self.memory.short_term.remember_event(f"Completed ritual: {step.ritual_name}")
+
+    def _get_personal_ritual_schedule(self) -> List[dict]:
+        return get_ritual_schedule_payload(
+            include_optional_rituals=self.profile.performs_sacrifice,
+        )
+
+    def _should_skip_step(self, step: RitualStep) -> bool:
+        return step.progress_key == "sacrifice_complete" and not self.profile.performs_sacrifice
+
+    def _mark_skipped_optional_rituals(self, simulation_ritual_index: int) -> None:
+        if simulation_ritual_index < 0:
+            return
+        for step in HAJJ_RITUAL_SCHEDULE:
+            if (step.sequence_order - 1) > simulation_ritual_index:
+                break
+            if not self._should_skip_step(step):
+                continue
+            if step.progress_key not in self.memory.long_term.ritual_progress:
+                self.memory.long_term.ritual_progress.append(step.progress_key)
+                self.memory.short_term.remember_event(f"Skipped optional ritual: {step.ritual_name}")
+
+    def _get_applicable_step_for_tick(self, simulation_ritual_index: int) -> Optional[RitualStep]:
+        for index in range(max(int(simulation_ritual_index), 0), len(HAJJ_RITUAL_SCHEDULE)):
+            step = HAJJ_RITUAL_SCHEDULE[index]
+            if not self._should_skip_step(step):
+                return step
+        return None
+
+    def _get_next_applicable_step_for_tick(self, simulation_ritual_index: int) -> Optional[RitualStep]:
+        current_step = self._get_applicable_step_for_tick(simulation_ritual_index)
+        found_current = False
+        for step in HAJJ_RITUAL_SCHEDULE:
+            if self._should_skip_step(step):
+                continue
+            if found_current:
+                return step
+            if current_step and step.progress_key == current_step.progress_key:
+                found_current = True
+        return None
 
     def _align_location_with_ritual(self, force: bool = False) -> None:
         destination = self.state.target_node
@@ -868,6 +956,7 @@ class PilgrimAgent:
                 "chronic_conditions": list(self.profile.chronic_conditions),
                 "language": self.profile.language,
                 "risk_tolerance": self.profile.risk_tolerance,
+                "performs_sacrifice": self.profile.performs_sacrifice,
             },
             "state": {
                 "current_node": self.state.current_node,
@@ -968,6 +1057,7 @@ class AgentFactory:
         language: str,
         chronic_conditions: Optional[Sequence[str]] = None,
         risk_tolerance: Optional[float] = None,
+        performs_sacrifice: Optional[bool] = None,
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> PilgrimAgent:
         profile = StaticProfile(
@@ -980,6 +1070,7 @@ class AgentFactory:
             chronic_conditions=tuple(chronic_conditions or ()),
             language=language,
             risk_tolerance=risk_tolerance if risk_tolerance is not None else self._derive_risk_tolerance(age, health_status),
+            performs_sacrifice=self._derive_sacrifice_participation() if performs_sacrifice is None else performs_sacrifice,
         )
         return PilgrimAgent(
             static_profile=profile,
@@ -1013,6 +1104,7 @@ class AgentFactory:
             target_node=target_node or self.random.choice(list(self.DEFAULT_TARGET_NODES)),
             language=language,
             chronic_conditions=chronic_conditions,
+            performs_sacrifice=self._derive_sacrifice_participation(),
             llm_override=llm_override,
         )
         self._seed_memory(agent)
@@ -1043,6 +1135,7 @@ class AgentFactory:
             "chronic_conditions": snapshot["profile"]["chronic_conditions"],
             "language": snapshot["profile"]["language"],
             "risk_tolerance": snapshot["profile"]["risk_tolerance"],
+            "performs_sacrifice": snapshot["profile"]["performs_sacrifice"],
             "initial_node": snapshot["state"]["current_node"],
             "target_node": snapshot["state"]["target_node"],
             "social_memory": snapshot["memory"]["social"],
@@ -1077,6 +1170,9 @@ class AgentFactory:
             return ()
         condition_count = 1 if health_status == "needs_support" else min(2, len(available))
         return tuple(self.random.sample(available, k=condition_count))
+
+    def _derive_sacrifice_participation(self) -> bool:
+        return self.random.random() < 0.7
 
     def _seed_memory(self, agent: PilgrimAgent) -> None:
         preferred_route = plan_route(agent.state.current_node, agent.state.target_node)
@@ -1120,6 +1216,7 @@ def build_agent_from_record(
         chronic_conditions=tuple(item.get("chronic_conditions", [])),
         language=item.get("language", "Arabic"),
         risk_tolerance=float(item.get("risk_tolerance", 0.5)),
+        performs_sacrifice=bool(item.get("performs_sacrifice", True)),
     )
 
     agent = PilgrimAgent(
@@ -1145,7 +1242,7 @@ def build_agent_from_record(
     agent.memory.long_term.ritual_progress = long_term_memory.get("ritual_progress", [])
     agent.memory.long_term.ritual_schedule = long_term_memory.get(
         "ritual_schedule",
-        get_ritual_schedule_payload(),
+        get_ritual_schedule_payload(include_optional_rituals=profile.performs_sacrifice),
     )
     agent._sync_ritual_goal({"simulation_ritual_index": -1})
 
@@ -1164,6 +1261,7 @@ def build_manual_agent(
     language: str = "Arabic",
     chronic_conditions: Optional[Sequence[str]] = None,
     risk_tolerance: float = 0.5,
+    performs_sacrifice: bool = True,
     llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
 ) -> PilgrimAgent:
     factory = AgentFactory()
@@ -1179,6 +1277,7 @@ def build_manual_agent(
         language=language,
         chronic_conditions=tuple(chronic_conditions or ()),
         risk_tolerance=float(risk_tolerance),
+        performs_sacrifice=bool(performs_sacrifice),
         llm_override=llm_override,
     )
     factory._seed_memory(agent)

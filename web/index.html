@@ -150,6 +150,11 @@
             </select>
           </label>
 
+          <label class="toggle-field">
+            <input type="checkbox" name="performs_sacrifice" checked>
+            <span>Participates in sacrifice ritual</span>
+          </label>
+
           <button class="primary-btn" type="submit">Create Manual Agent</button>
         </form>
 
@@ -227,8 +232,21 @@
             </label>
           </div>
 
-          <button class="accent-btn" type="submit">Simulate One Ritual</button>
-          <button class="secondary-btn" id="resetDaysButton" type="button">Reset to Start</button>
+          <div class="playback-controls">
+            <button class="accent-btn" type="submit">Simulate One Ritual</button>
+            <button class="primary-btn" id="startSimulationButton" type="button">Start Movement</button>
+            <button class="secondary-btn" id="pauseSimulationButton" type="button">Pause</button>
+            <label class="toolbar-field compact-field">
+              Speed
+              <select id="playbackSpeedSelect">
+                <option value="1200">Slow</option>
+                <option value="800" selected>Normal</option>
+                <option value="450">Fast</option>
+                <option value="250">Very Fast</option>
+              </select>
+            </label>
+            <button class="secondary-btn" id="resetDaysButton" type="button">Reset to Start</button>
+          </div>
           <p class="environment-tick">Current Day: <strong id="environmentDayLabel">Upon Arrival in Makkah</strong></p>
           <p class="environment-tick">Current Location: <strong id="environmentLocationLabel">Makkah Airport</strong></p>
           <p class="environment-tick">Current Ritual: <strong id="environmentRitualLabel">Not Started</strong></p>

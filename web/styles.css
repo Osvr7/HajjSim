@@ -172,6 +172,22 @@ label {
   font-weight: 600;
 }
 
+.toggle-field {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.toggle-field input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
 input,
 select {
   width: 100%;
@@ -223,6 +239,17 @@ button:hover {
   height: 1px;
   background: linear-gradient(90deg, transparent 0%, var(--line) 22%, var(--line) 78%, transparent 100%);
   margin: 14px 0;
+}
+
+.playback-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.compact-field {
+  gap: 5px;
 }
 
 .environment-tick {
