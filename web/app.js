@@ -217,6 +217,10 @@ let mapLayerGroup;
 let routeLayerGroup;
 let heatLayer;
 let analyticsChart;
+let agentMarkers = new Map();
+let currentEnvironment = null;
+let summaryHistory = [];
+let mapHasInitialFit = false;
 
 const rosterFilters = {
   searchQuery: "",
@@ -899,6 +903,12 @@ function resetManualDefaults() {
   manualForm.risk_tolerance.value = "0.5";
   manualForm.initial_node.value = "Makkah_Airport";
   manualForm.target_node.value = "Arafat_Main_Field";
+  const chronicConditions = manualForm.elements.chronic_conditions;
+  if (chronicConditions) {
+    [...chronicConditions.options].forEach((option) => {
+      option.selected = false;
+    });
+  }
 }
 
 function applyRosterFilters() {
@@ -941,6 +951,9 @@ function clearRosterFilters() {
     sortRosterSelect.value = "default";
   }
   renderAgents(agents);
+  if (currentEnvironment) {
+    renderMap(agents, currentEnvironment);
+  }
 }
 
 populateNationalityOptions();
@@ -951,7 +964,7 @@ syncSortControl();
 function applyEnvironmentForm(environment) {
   environmentForm.density.value = environment.density;
   environmentForm.temperature.value = environment.temperature;
-  environmentForm.hazard.value = environment.hazard;
+  environmentForm.hazard.value = environment.hazard || "none";
   environmentForm.group_location.value = environment.group_location;
   environmentForm.alternate_node.value = environment.alternate_node;
   environmentForm.panic_node.value = environment.panic_node;
@@ -1018,7 +1031,7 @@ async function refreshAll() {
   renderSummary(summaryResponse.summary);
   renderMap(agents, currentEnvironment);
   renderAgents(agents);
-  renderChart(agents);
+  renderChart(summaryHistory);
   applyEnvironmentForm(environmentResponse.environment);
 }
 
