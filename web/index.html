@@ -128,7 +128,7 @@
               </select>
             </label>
             <label>
-              Target Location
+              Initial Target (schedule overrides later)
               <select name="target_node" required>
                 <option value="Arafat" selected>Arafat</option>
                 <option value="Muzdalifah">Muzdalifah</option>
@@ -168,7 +168,7 @@
         <form id="environmentForm" class="stack">
           <div class="panel-header compact">
             <h2>Environment Controls</h2>
-            <p>Start simulation environment and advance one tick per step.</p>
+            <p>Advance the simulation one ritual per tick, starting from arrival in Makkah.</p>
           </div>
 
           <div class="grid two">
@@ -227,8 +227,13 @@
             </label>
           </div>
 
-          <button class="accent-btn" type="submit">Simulate One Tick</button>
-          <p class="environment-tick">Current Tick: <strong id="environmentTick">0</strong></p>
+          <button class="accent-btn" type="submit">Simulate One Ritual</button>
+          <button class="secondary-btn" id="resetDaysButton" type="button">Reset to Start</button>
+          <p class="environment-tick">Current Day: <strong id="environmentDayLabel">Upon Arrival in Makkah</strong></p>
+          <p class="environment-tick">Current Location: <strong id="environmentLocationLabel">Makkah Airport</strong></p>
+          <p class="environment-tick">Current Ritual: <strong id="environmentRitualLabel">Not Started</strong></p>
+          <p class="environment-tick">Next Ritual: <strong id="environmentNextRitualLabel">Tawaf Al-Qudoum (Arrival Tawaf)</strong></p>
+          <p class="environment-tick">Ritual Tick: <strong id="environmentTick">0</strong></p>
         </form>
       </section>
 

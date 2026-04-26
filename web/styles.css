@@ -402,6 +402,18 @@ button:hover {
   padding: 14px;
   display: grid;
   gap: 10px;
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+}
+
+.agent-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(59, 48, 27, 0.12);
+}
+
+.agent-card:focus-visible {
+  outline: 3px solid rgba(31, 111, 82, 0.85);
+  outline-offset: 2px;
 }
 
 .agent-card.risk-stable {

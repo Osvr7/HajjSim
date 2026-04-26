@@ -1,6 +1,6 @@
 import json
 
-from hajj_agents import AgentFactory, PilgrimAgent, StaticProfile
+from hajj_agents import AgentFactory, PilgrimAgent, StaticProfile, get_simulation_tick_payload
 
 
 def build_profile(item):
@@ -104,6 +104,7 @@ def main():
     agents = load_agents_from_file("pilgrims.json")
     print(f"Successfully loaded {len(agents)} agents.\n")
     factory = AgentFactory(seed=42)
+    simulation_tick = -1
 
     while True:
         print("Available Pilgrim IDs:", ", ".join(agents.keys()))
@@ -116,16 +117,27 @@ def main():
             break
 
         if user_input.lower() == "step":
+            simulation_tick += 1
+            tick_state = get_simulation_tick_payload(simulation_tick)
             environment_data = {
                 "density": 5.5,
                 "temperature": 39.0,
-                "group_location": "Mina_Camp_4",
+                "group_location": "Makkah_Airport",
                 "alternate_node": "Shade_Corridor",
                 "panic_node": "Emergency_Point",
+                "simulation_ritual_index": tick_state["simulation_ritual_index"],
+                "simulation_day_index": tick_state["simulation_day_index"],
+                "simulation_day_label": tick_state["simulation_day_label"],
+                "current_ritual": tick_state["current_ritual"],
+                "next_ritual": tick_state["next_ritual"],
             }
             for agent in agents.values():
                 agent.step(environment_data)
-            print("Simulation advanced by one tick.\n")
+            print(
+                "Simulation advanced by one ritual tick: "
+                f"{tick_state['simulation_day_label']} | {tick_state['current_ritual']}"
+            )
+            print()
             continue
 
         if user_input.lower().startswith("generate"):

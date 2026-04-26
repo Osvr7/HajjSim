@@ -9,23 +9,23 @@
     "chronic_conditions": ["diabetes"],
     "language": "Bahasa Indonesia",
     "risk_tolerance": 0.25,
-    "initial_node": "Mina_Camp_4",
-    "target_node": "Arafat",
+    "initial_node": "Makkah_Airport",
+    "target_node": "Tawaf_Area",
     "social_memory": {
       "leader_id": "P_002",
       "known_companions": ["P_002"],
       "help_contacts": ["Medical_Desk_1"],
-      "group_last_seen_node": "Mina_Camp_4"
+      "group_last_seen_node": "Makkah_Airport"
     },
     "long_term_memory": {
       "known_routes": {
-        "Arafat": ["Mina_Camp_4", "Bus_Stop_A", "Arafat"]
+        "Tawaf_Area": ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
       },
       "known_hazards": {},
       "learned_preferences": {
         "prefer_shaded_route": 0.9
       },
-      "ritual_progress": ["arrival_in_mina"]
+      "ritual_progress": []
     }
   },
   {
@@ -38,23 +38,23 @@
     "chronic_conditions": [],
     "language": "Arabic",
     "risk_tolerance": 0.7,
-    "initial_node": "Mina_Camp_4",
-    "target_node": "Arafat",
+    "initial_node": "Makkah_Airport",
+    "target_node": "Tawaf_Area",
     "social_memory": {
       "leader_id": null,
       "known_companions": ["P_001"],
       "help_contacts": ["Guide_G_102"],
-      "group_last_seen_node": "Mina_Camp_4"
+      "group_last_seen_node": "Makkah_Airport"
     },
     "long_term_memory": {
       "known_routes": {
-        "Arafat": ["Mina_Camp_4", "Main_Walkway", "Arafat"]
+        "Tawaf_Area": ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
       },
       "known_hazards": {},
       "learned_preferences": {
         "prefer_fast_route": 0.8
       },
-      "ritual_progress": ["arrival_in_mina"]
+      "ritual_progress": []
     }
   },
   {
@@ -67,25 +67,23 @@
     "chronic_conditions": [],
     "language": "English",
     "risk_tolerance": 0.45,
-    "initial_node": "Jamarat_Bridge",
-    "target_node": "Muzdalifah",
+    "initial_node": "Makkah_Airport",
+    "target_node": "Tawaf_Area",
     "social_memory": {
       "leader_id": "Guide_G_880",
       "known_companions": ["P_010", "P_011"],
       "help_contacts": ["Guide_G_880"],
-      "group_last_seen_node": "Jamarat_Bridge"
+      "group_last_seen_node": "Makkah_Airport"
     },
     "long_term_memory": {
       "known_routes": {
-        "Muzdalifah": ["Jamarat_Bridge", "Tunnel_3", "Muzdalifah"]
+        "Tawaf_Area": ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area"]
       },
-      "known_hazards": {
-        "Tunnel_3": "heavy_congestion"
-      },
+      "known_hazards": {},
       "learned_preferences": {
         "avoid_dense_areas": 0.75
       },
-      "ritual_progress": ["stoning_complete"]
+      "ritual_progress": []
     }
   }
 ]
