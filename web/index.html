@@ -253,7 +253,7 @@
     <section class="panel chart-panel">
       <div class="panel-header">
         <h2>Operational Graph</h2>
-        <p>Live distribution of pilgrims by major locations.</p>
+        <p>Tick-by-tick trend of operational pressure after each simulation step.</p>
       </div>
       <canvas id="analyticsChart" height="120"></canvas>
     </section>
@@ -272,6 +272,15 @@
           Group
           <select id="groupFilter">
             <option value="all">All groups</option>
+          </select>
+        </label>
+        <label class="toolbar-field">
+          Health Profile
+          <select id="healthFilter">
+            <option value="all">All profiles</option>
+            <option value="stable">Stable profile</option>
+            <option value="needs_support">Needs support profile</option>
+            <option value="high_risk">High risk profile</option>
           </select>
         </label>
         <label class="toolbar-field">

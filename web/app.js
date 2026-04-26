@@ -182,6 +182,7 @@ const agentGrid = document.querySelector("#agentGrid");
 const agentCardTemplate = document.querySelector("#agentCardTemplate");
 const rosterSearchInput = document.querySelector("#rosterSearchInput");
 const groupFilterSelect = document.querySelector("#groupFilter");
+const healthFilterSelect = document.querySelector("#healthFilter");
 const riskFilterSelect = document.querySelector("#riskFilter");
 const sortRosterSelect = document.querySelector("#sortRosterSelect");
 const applyRosterFiltersButton = document.querySelector("#applyRosterFilters");
@@ -200,12 +201,49 @@ let mapLayerGroup;
 let routeLayerGroup;
 let heatLayer;
 let analyticsChart;
+let summaryHistory = [];
+let currentEnvironment = null;
 
 const rosterFilters = {
   searchQuery: "",
   groupId: "all",
+  health: "all",
   risk: "all",
   sortMode: "default"
+};
+
+const NODE_PRESSURE_BASELINES = {
+  Kaaba: 10,
+  Masjid_al_Haram_Perimeter: 16,
+  Tawaf_Area: 9,
+  Sai_Corridor: 12,
+  Aziziyah_Zone: 18,
+  Makkah_Bus_Station: 14,
+  Mina_Camp_1: 16,
+  Mina_Camp_2: 16,
+  Mina_Camp_4: 14,
+  Mina_Camps_Core: 22,
+  Mina_West_Gate: 12,
+  Mina_East_Gate: 12,
+  Jamarat_Bridge: 10,
+  Jamarat_Complex: 13,
+  Jamarat: 10,
+  Arafat_Gate: 12,
+  Arafat_Main_Field: 28,
+  Arafat: 26,
+  Muzdalifah_Open_Area: 24,
+  Muzdalifah: 20,
+  Cooling_Station_1: 8,
+  Shade_Corridor: 9,
+  Shade_Corridor_2: 9,
+  Transit_Corridor: 10,
+  Medical_Post_1: 7,
+  Security_Checkpoint_1: 8,
+  Emergency_Point_1: 6,
+  Emergency_Point_2: 6,
+  Field_Hospital: 8,
+  Police_Assist_Point: 7,
+  Emergency_Point: 6
 };
 
 function populateNationalityOptions() {
@@ -361,7 +399,8 @@ function renderMap(currentAgents, environment) {
   routeLayerGroup.clearLayers();
   mapLayerGroup.clearLayers();
   renderRoutes();
-  renderHeatmap(currentAgents, environment);
+  const visibleAgents = getDisplayedAgents(currentAgents);
+  renderHeatmap(visibleAgents, environment);
 
   Object.entries(siteGps).forEach(([nodeId, site]) => {
     const marker = L.marker([site.lat, site.lng], { title: site.label });
@@ -370,7 +409,7 @@ function renderMap(currentAgents, environment) {
     marker.on("click", () => focusNodeAgents(nodeId));
   });
 
-  currentAgents.forEach((agent, index) => {
+  visibleAgents.forEach((agent, index) => {
     const node = agent.state.current_node;
     const base = siteGps[node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
     const status = getAgentStatus(agent);
@@ -449,29 +488,41 @@ function renderHeatmap(currentAgents, environment) {
     countsByNode[node] = (countsByNode[node] || 0) + 1;
   });
 
-  const maxCount = Math.max(1, ...Object.values(countsByNode));
-  const densityScale = Math.max(0.2, Math.min(1.6, Number(environment?.density || 5) / 5));
+  const densityValue = Number(environment?.density || 5);
+  const normalizedDensity = 0.75 + (Math.max(0, Math.min(10, densityValue)) / 10) * 0.6;
+  const hazardMultiplier = ["crowd_bottleneck", "stampede_risk", "route_congestion"].includes(environment?.hazard)
+    ? 1.18
+    : 1;
   const heatPoints = Object.entries(countsByNode)
     .map(([nodeId, count]) => {
       const site = siteGps[nodeId];
       if (!site) {
         return null;
       }
-      const weight = Math.min(1, (count / maxCount) * densityScale);
+      const nodeCapacity = NODE_PRESSURE_BASELINES[nodeId] || 12;
+      const pressure = (count / nodeCapacity) * normalizedDensity * hazardMultiplier;
+      if (pressure < 0.18) {
+        return null;
+      }
+      const weight = Math.min(1, pressure);
       return [site.lat, site.lng, weight];
     })
     .filter(Boolean);
 
+  if (!heatPoints.length) {
+    return;
+  }
+
   heatLayer = L.heatLayer(heatPoints, {
-    radius: 34,
-    blur: 24,
+    radius: 26,
+    blur: 20,
     maxZoom: 15,
     gradient: {
-      0.2: "#2b83ba",
-      0.4: "#abdda4",
-      0.6: "#fdae61",
-      0.85: "#f46d43",
-      1.0: "#d73027"
+      0.18: "#6baed6",
+      0.38: "#9fd38b",
+      0.58: "#f2c45a",
+      0.78: "#ec7b45",
+      1.0: "#c73a2b"
     }
   });
   heatLayer.addTo(map);
@@ -530,8 +581,9 @@ function getDisplayedAgents(currentAgents) {
 
     const matchesSearch = !searchQuery || searchableFields.includes(searchQuery);
     const matchesGroup = rosterFilters.groupId === "all" || agent.profile.group_id === rosterFilters.groupId;
+    const matchesHealth = rosterFilters.health === "all" || agent.profile.health_status === rosterFilters.health;
     const matchesRisk = rosterFilters.risk === "all" || getAgentStatus(agent) === rosterFilters.risk;
-    return matchesSearch && matchesGroup && matchesRisk;
+    return matchesSearch && matchesGroup && matchesHealth && matchesRisk;
   });
 
   switch (rosterFilters.sortMode) {
@@ -609,31 +661,53 @@ function renderAgents(currentAgents) {
   updateRosterMeta(visibleAgents.length, currentAgents.length);
 }
 
-function renderChart(currentAgents) {
-  const counts = {};
-
-  currentAgents.forEach((agent) => {
-    const node = agent.state.current_node;
-    counts[node] = (counts[node] || 0) + 1;
-  });
-
-  const sortedEntries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const labels = sortedEntries.map(([node]) => siteGps[node]?.label || node.replaceAll("_", " "));
-  const values = sortedEntries.map(([, count]) => count);
+function renderChart(history) {
+  const labels = history.map((entry) => `Tick ${entry.simulation_tick}`);
+  const stressSeries = history.map((entry) => Number(entry.avg_stress || 0));
+  const supportSeries = history.map((entry) => Number(entry.needs_support_agents || 0));
+  const highRiskSeries = history.map((entry) => Number(entry.high_risk_agents || 0));
+  const panickingSeries = history.map((entry) => Number(entry.panicking_agents || 0));
 
   if (!analyticsChart) {
     analyticsChart = new Chart(analyticsChartCanvas, {
-      type: "bar",
+      type: "line",
       data: {
         labels,
-        datasets: [{
-          label: "Pilgrims per location",
-          data: values,
-          backgroundColor: "rgba(43, 134, 95, 0.75)",
-          borderColor: "rgba(25, 77, 55, 1)",
-          borderWidth: 1,
-          borderRadius: 8
-        }]
+        datasets: [
+          {
+            label: "Average stress",
+            data: stressSeries,
+            borderColor: "rgba(32, 106, 78, 1)",
+            backgroundColor: "rgba(32, 106, 78, 0.12)",
+            yAxisID: "y",
+            tension: 0.28,
+            fill: true
+          },
+          {
+            label: "Needs support",
+            data: supportSeries,
+            borderColor: "rgba(166, 114, 49, 1)",
+            backgroundColor: "rgba(166, 114, 49, 0.08)",
+            yAxisID: "y1",
+            tension: 0.28
+          },
+          {
+            label: "High risk",
+            data: highRiskSeries,
+            borderColor: "rgba(194, 64, 47, 1)",
+            backgroundColor: "rgba(194, 64, 47, 0.08)",
+            yAxisID: "y1",
+            tension: 0.28
+          },
+          {
+            label: "Panicking",
+            data: panickingSeries,
+            borderColor: "rgba(109, 63, 209, 1)",
+            backgroundColor: "rgba(109, 63, 209, 0.08)",
+            yAxisID: "y1",
+            tension: 0.28
+          }
+        ]
       },
       options: {
         responsive: true,
@@ -643,8 +717,25 @@ function renderChart(currentAgents) {
         },
         scales: {
           y: {
+            position: "left",
             beginAtZero: true,
-            ticks: { precision: 0 }
+            suggestedMax: 100,
+            title: {
+              display: true,
+              text: "Average stress"
+            }
+          },
+          y1: {
+            position: "right",
+            beginAtZero: true,
+            ticks: { precision: 0 },
+            grid: {
+              drawOnChartArea: false
+            },
+            title: {
+              display: true,
+              text: "Pilgrim count"
+            }
           }
         }
       }
@@ -653,7 +744,10 @@ function renderChart(currentAgents) {
   }
 
   analyticsChart.data.labels = labels;
-  analyticsChart.data.datasets[0].data = values;
+  analyticsChart.data.datasets[0].data = stressSeries;
+  analyticsChart.data.datasets[1].data = supportSeries;
+  analyticsChart.data.datasets[2].data = highRiskSeries;
+  analyticsChart.data.datasets[3].data = panickingSeries;
   analyticsChart.update();
 }
 
@@ -730,9 +824,13 @@ function resetManualDefaults() {
 function applyRosterFilters() {
   rosterFilters.searchQuery = rosterSearchInput?.value || "";
   rosterFilters.groupId = groupFilterSelect?.value || "all";
+  rosterFilters.health = healthFilterSelect?.value || "all";
   rosterFilters.risk = riskFilterSelect?.value || "all";
   rosterFilters.sortMode = sortRosterSelect?.value || "default";
   renderAgents(agents);
+  if (currentEnvironment) {
+    renderMap(agents, currentEnvironment);
+  }
 }
 
 function applyRosterSort() {
@@ -743,6 +841,7 @@ function applyRosterSort() {
 function clearRosterFilters() {
   rosterFilters.searchQuery = "";
   rosterFilters.groupId = "all";
+  rosterFilters.health = "all";
   rosterFilters.risk = "all";
   rosterFilters.sortMode = "default";
 
@@ -751,6 +850,9 @@ function clearRosterFilters() {
   }
   if (groupFilterSelect) {
     groupFilterSelect.value = "all";
+  }
+  if (healthFilterSelect) {
+    healthFilterSelect.value = "all";
   }
   if (riskFilterSelect) {
     riskFilterSelect.value = "all";
@@ -777,19 +879,21 @@ function applyEnvironmentForm(environment) {
 }
 
 async function refreshAll() {
-  const [agentResponse, summary, environmentResponse] = await Promise.all([
+  const [agentResponse, summaryResponse, environmentResponse] = await Promise.all([
     fetchJson("/api/agents"),
     fetchJson("/api/summary"),
     fetchJson("/api/environment")
   ]);
 
   agents = agentResponse.agents;
+  summaryHistory = summaryResponse.history || [];
+  currentEnvironment = environmentResponse.environment;
   populateGroupFilterOptions(agents);
-  renderSummary(summary);
-  renderMap(agents, environmentResponse.environment);
+  renderSummary(summaryResponse.summary);
+  renderMap(agents, currentEnvironment);
   renderAgents(agents);
-  renderChart(agents);
-  applyEnvironmentForm(environmentResponse.environment);
+  renderChart(summaryHistory);
+  applyEnvironmentForm(currentEnvironment);
 }
 
 applyRosterFiltersButton?.addEventListener("click", applyRosterFilters);
@@ -797,6 +901,7 @@ applyRosterSortButton?.addEventListener("click", applyRosterSort);
 clearRosterFiltersButton?.addEventListener("click", clearRosterFilters);
 rosterSearchInput?.addEventListener("input", applyRosterFilters);
 groupFilterSelect?.addEventListener("change", applyRosterFilters);
+healthFilterSelect?.addEventListener("change", applyRosterFilters);
 riskFilterSelect?.addEventListener("change", applyRosterFilters);
 sortRosterSelect?.addEventListener("change", applyRosterFilters);
 

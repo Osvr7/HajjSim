@@ -140,6 +140,85 @@ class AgentRepository:
 
 REPOSITORY = AgentRepository(DATA_FILE)
 ENVIRONMENT = EnvironmentState()
+SUMMARY_HISTORY: list[dict] = []
+
+
+def derive_operational_status(agent: dict) -> str:
+    state = agent["state"]
+    stress = float(state["stress"])
+    fatigue = float(state["fatigue"])
+    hydration = float(state["hydration"])
+
+    if state["is_panicking"]:
+        return "panicking"
+    if stress >= 88.0 or fatigue >= 86.0 or hydration <= 28.0:
+        return "high_risk"
+    if stress >= 62.0 or fatigue >= 58.0 or hydration <= 62.0:
+        return "needs_support"
+    return "stable"
+
+
+def build_summary_snapshot() -> dict:
+    agents = REPOSITORY.list_agents()
+    total = len(agents)
+    stable = 0
+    needs_support = 0
+    high_risk = 0
+    panicking = 0
+
+    for agent in agents:
+        risk_level = derive_operational_status(agent)
+        if risk_level == "panicking":
+            panicking += 1
+        elif risk_level == "high_risk":
+            high_risk += 1
+        elif risk_level == "needs_support":
+            needs_support += 1
+        else:
+            stable += 1
+
+    avg_stress = round(
+        sum(agent["state"]["stress"] for agent in agents) / total,
+        1,
+    ) if total else 0.0
+    avg_fatigue = round(
+        sum(agent["state"]["fatigue"] for agent in agents) / total,
+        1,
+    ) if total else 0.0
+    avg_hydration = round(
+        sum(agent["state"]["hydration"] for agent in agents) / total,
+        1,
+    ) if total else 0.0
+    severity_index = round(
+        ((panicking * 1.0) + (high_risk * 0.7) + (needs_support * 0.4)) / total * 100,
+        1,
+    ) if total else 0.0
+
+    return {
+        "total_agents": total,
+        "stable_agents": stable,
+        "panicking_agents": panicking,
+        "needs_support_agents": needs_support,
+        "high_risk_agents": high_risk,
+        "avg_stress": avg_stress,
+        "avg_fatigue": avg_fatigue,
+        "avg_hydration": avg_hydration,
+        "severity_index": severity_index,
+        "simulation_tick": ENVIRONMENT.tick,
+    }
+
+
+def update_summary_history() -> dict:
+    summary = build_summary_snapshot()
+    entry = {**summary}
+    if SUMMARY_HISTORY and SUMMARY_HISTORY[-1]["simulation_tick"] == entry["simulation_tick"]:
+        SUMMARY_HISTORY[-1] = entry
+    else:
+        SUMMARY_HISTORY.append(entry)
+    return summary
+
+
+update_summary_history()
 
 
 class HajjSimHandler(SimpleHTTPRequestHandler):
@@ -158,7 +237,10 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             self._send_json({"agents": REPOSITORY.list_agents()})
             return
         if parsed.path == "/api/summary":
-            self._send_json(self._build_summary())
+            self._send_json({
+                "summary": build_summary_snapshot(),
+                "history": SUMMARY_HISTORY,
+            })
             return
         if parsed.path == "/api/environment":
             self._send_json({"environment": ENVIRONMENT.to_dict()})
@@ -175,12 +257,14 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/agents":
             snapshot = REPOSITORY.create_manual_agent(payload)
+            update_summary_history()
             self._send_json({"agent": snapshot}, status=HTTPStatus.CREATED)
             return
 
         if parsed.path == "/api/agents/random":
             count = max(1, min(500, int(payload.get("count", 10))))
             agents = REPOSITORY.generate_random_agents(count)
+            update_summary_history()
             self._send_json({"agents": agents}, status=HTTPStatus.CREATED)
             return
 
@@ -193,11 +277,13 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             ENVIRONMENT.apply_updates(payload)
             actions = REPOSITORY.step_all(ENVIRONMENT.to_payload())
             ENVIRONMENT.tick += 1
+            summary = update_summary_history()
             self._send_json(
                 {
                     "environment": ENVIRONMENT.to_dict(),
                     "actions": actions,
-                    "summary": self._build_summary(),
+                    "summary": summary,
+                    "history": SUMMARY_HISTORY,
                 }
             )
             return
@@ -212,69 +298,6 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             parsed = parse_qs(raw_body)
             return {key: values[0] if len(values) == 1 else values for key, values in parsed.items()}
         return {}
-
-    def _build_summary(self) -> dict:
-        agents = REPOSITORY.list_agents()
-        total = len(agents)
-        stable = 0
-        needs_support = 0
-        high_risk = 0
-        panicking = 0
-
-        for agent in agents:
-            risk_level = self._derive_operational_status(agent)
-            if risk_level == "panicking":
-                panicking += 1
-            elif risk_level == "high_risk":
-                high_risk += 1
-            elif risk_level == "needs_support":
-                needs_support += 1
-            else:
-                stable += 1
-
-        avg_stress = round(
-            sum(agent["state"]["stress"] for agent in agents) / total,
-            1,
-        ) if total else 0.0
-        avg_fatigue = round(
-            sum(agent["state"]["fatigue"] for agent in agents) / total,
-            1,
-        ) if total else 0.0
-        avg_hydration = round(
-            sum(agent["state"]["hydration"] for agent in agents) / total,
-            1,
-        ) if total else 0.0
-        severity_index = round(
-            ((panicking * 1.0) + (high_risk * 0.7) + (needs_support * 0.4)) / total * 100,
-            1,
-        ) if total else 0.0
-
-        return {
-            "total_agents": total,
-            "stable_agents": stable,
-            "panicking_agents": panicking,
-            "needs_support_agents": needs_support,
-            "high_risk_agents": high_risk,
-            "avg_stress": avg_stress,
-            "avg_fatigue": avg_fatigue,
-            "avg_hydration": avg_hydration,
-            "severity_index": severity_index,
-            "simulation_tick": ENVIRONMENT.tick,
-        }
-
-    def _derive_operational_status(self, agent: dict) -> str:
-        state = agent["state"]
-        stress = float(state["stress"])
-        fatigue = float(state["fatigue"])
-        hydration = float(state["hydration"])
-
-        if state["is_panicking"]:
-            return "panicking"
-        if stress >= 88.0 or fatigue >= 86.0 or hydration <= 28.0:
-            return "high_risk"
-        if stress >= 62.0 or fatigue >= 58.0 or hydration <= 62.0:
-            return "needs_support"
-        return "stable"
 
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode("utf-8")
