@@ -1,11 +1,19 @@
 import json
+from collections import Counter
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from hajj_agents import AgentFactory, build_agent_from_record, build_manual_agent
+from hajj_agents import (
+    AgentFactory,
+    build_agent_from_record,
+    build_manual_agent,
+    get_simulation_day_payload,
+    get_simulation_tick_payload,
+    get_ritual_schedule_payload,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -18,10 +26,13 @@ class EnvironmentState:
     density: float = 5.0
     temperature: float = 37.0
     hazard: str = "none"
-    group_location: str = "Mina_Camp_4"
+    group_location: str = "Makkah_Airport"
     alternate_node: str = "Shade_Corridor"
     panic_node: str = "Emergency_Point"
-    tick: int = 0
+    tick: int = -1
+
+    def _current_tick_state(self):
+        return get_simulation_tick_payload(self.tick)
 
     def apply_updates(self, payload: dict) -> None:
         if "density" in payload:
@@ -38,6 +49,7 @@ class EnvironmentState:
             self.panic_node = str(payload["panic_node"] or self.panic_node)
 
     def to_payload(self) -> dict:
+        tick_state = self._current_tick_state()
         return {
             "density": self.density,
             "temperature": self.temperature,
@@ -45,9 +57,18 @@ class EnvironmentState:
             "group_location": self.group_location,
             "alternate_node": self.alternate_node,
             "panic_node": self.panic_node,
+            "tick": self.tick,
+            "simulation_ritual_index": tick_state["simulation_ritual_index"],
+            "simulation_day_index": tick_state["simulation_day_index"],
+            "simulation_day_label": tick_state["simulation_day_label"],
+            "current_ritual": tick_state["current_ritual"],
+            "next_ritual": tick_state["next_ritual"],
+            "next_ritual_day_label": tick_state["next_ritual_day_label"],
+            "scheduled_rituals": list(tick_state["day_plan_rituals"]),
         }
 
     def to_dict(self) -> dict:
+        tick_state = self._current_tick_state()
         return {
             "density": round(self.density, 2),
             "temperature": round(self.temperature, 2),
@@ -55,7 +76,18 @@ class EnvironmentState:
             "group_location": self.group_location,
             "alternate_node": self.alternate_node,
             "panic_node": self.panic_node,
-            "tick": self.tick,
+            "tick": max(self.tick + 1, 0),
+            "simulation_ritual_index": tick_state["simulation_ritual_index"],
+            "simulation_day_index": tick_state["simulation_day_index"],
+            "simulation_day_label": tick_state["simulation_day_label"],
+            "current_ritual": tick_state["current_ritual"],
+            "next_ritual": tick_state["next_ritual"],
+            "next_ritual_day_label": tick_state["next_ritual_day_label"],
+            "day_plan_rituals": list(tick_state["day_plan_rituals"]),
+            "ritual_day_label": tick_state["simulation_day_label"],
+            "day_plan_label": " | ".join(tick_state["day_plan_rituals"]),
+            "ritual_schedule": get_ritual_schedule_payload(),
+            "simulation_days": get_simulation_day_payload(),
         }
 
 
@@ -117,11 +149,26 @@ class AgentRepository:
         return [agent.get_snapshot() for agent in generated.values()]
 
     def step_all(self, environment_data: dict) -> list[dict]:
+        group_locations = {}
+        for agent in self.agents.values():
+            group_locations.setdefault(agent.profile.group_id, []).append(agent.state.current_node)
+
+        step_environment = dict(environment_data)
+        step_environment["group_locations"] = group_locations
+
         actions = []
         for agent in self.agents.values():
-            action = agent.step(environment_data)
+            action = agent.step(step_environment)
             actions.append({"pilgrim_id": agent.profile.pilgrim_id, "action": action})
         return actions
+
+    def sync_all(self, environment_data: dict) -> None:
+        for agent in self.agents.values():
+            agent.sync_with_environment(environment_data)
+
+    def reset_ritual_days(self) -> None:
+        for agent in self.agents.values():
+            agent.reset_ritual_cycle()
 
     def _advance_index(self, pilgrim_id: str) -> None:
         digits = "".join(char for char in pilgrim_id if char.isdigit())
@@ -175,12 +222,16 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/agents":
             snapshot = REPOSITORY.create_manual_agent(payload)
+            REPOSITORY.sync_all(ENVIRONMENT.to_payload())
+            snapshot = REPOSITORY.agents[snapshot["profile"]["pilgrim_id"]].get_snapshot()
             self._send_json({"agent": snapshot}, status=HTTPStatus.CREATED)
             return
 
         if parsed.path == "/api/agents/random":
             count = max(1, min(500, int(payload.get("count", 10))))
             agents = REPOSITORY.generate_random_agents(count)
+            REPOSITORY.sync_all(ENVIRONMENT.to_payload())
+            agents = [REPOSITORY.agents[agent["profile"]["pilgrim_id"]].get_snapshot() for agent in agents]
             self._send_json({"agents": agents}, status=HTTPStatus.CREATED)
             return
 
@@ -191,13 +242,26 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/simulate/step":
             ENVIRONMENT.apply_updates(payload)
-            actions = REPOSITORY.step_all(ENVIRONMENT.to_payload())
             ENVIRONMENT.tick += 1
+            REPOSITORY.sync_all(ENVIRONMENT.to_payload())
+            actions = REPOSITORY.step_all(ENVIRONMENT.to_payload())
             self._send_json(
                 {
                     "environment": ENVIRONMENT.to_dict(),
                     "actions": actions,
                     "summary": self._build_summary(),
+                }
+            )
+            return
+
+        if parsed.path == "/api/simulate/reset":
+            ENVIRONMENT.tick = -1
+            REPOSITORY.reset_ritual_days()
+            self._send_json(
+                {
+                    "environment": ENVIRONMENT.to_dict(),
+                    "summary": self._build_summary(),
+                    "agents": REPOSITORY.list_agents(),
                 }
             )
             return
@@ -215,6 +279,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
     def _build_summary(self) -> dict:
         agents = REPOSITORY.list_agents()
+        tick_state = get_simulation_tick_payload(ENVIRONMENT.tick)
         total = len(agents)
         stable = 0
         needs_support = 0
@@ -249,6 +314,22 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             1,
         ) if total else 0.0
 
+        current_ritual_counts = Counter(
+            agent["state"].get("current_ritual", "Unknown")
+            for agent in agents
+        )
+        next_ritual_counts = Counter(
+            agent["state"].get("next_ritual", "Unknown")
+            for agent in agents
+        )
+        current_location_counts = Counter(
+            agent["state"].get("current_node", "Unknown")
+            for agent in agents
+        )
+        leading_current_ritual = current_ritual_counts.most_common(1)[0][0] if current_ritual_counts else "None"
+        leading_next_ritual = next_ritual_counts.most_common(1)[0][0] if next_ritual_counts else "None"
+        leading_current_location = current_location_counts.most_common(1)[0][0] if current_location_counts else "None"
+
         return {
             "total_agents": total,
             "stable_agents": stable,
@@ -259,7 +340,17 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             "avg_fatigue": avg_fatigue,
             "avg_hydration": avg_hydration,
             "severity_index": severity_index,
-            "simulation_tick": ENVIRONMENT.tick,
+            "simulation_tick": max(ENVIRONMENT.tick + 1, 0),
+            "simulation_ritual_index": tick_state["simulation_ritual_index"],
+            "simulation_day_label": tick_state["simulation_day_label"],
+            "current_ritual": tick_state["current_ritual"],
+            "next_ritual": tick_state["next_ritual"],
+            "next_ritual_day_label": tick_state["next_ritual_day_label"],
+            "leading_current_location": leading_current_location,
+            "day_plan_rituals": list(tick_state["day_plan_rituals"]),
+            "day_plan_label": " | ".join(tick_state["day_plan_rituals"]),
+            "leading_current_ritual": leading_current_ritual,
+            "leading_next_ritual": leading_next_ritual,
         }
 
     def _derive_operational_status(self, agent: dict) -> str:

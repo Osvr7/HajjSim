@@ -1,4 +1,7 @@
 const siteGps = {
+  Makkah_Airport: { lat: 21.6702, lng: 39.1525, label: "Makkah Airport" },
+  Pilgrim_Country_Airport: { lat: 24.7136, lng: 46.6753, label: "Pilgrim Country Airport" },
+  Makkah_Arrival_Hub: { lat: 21.4858, lng: 39.1925, label: "Makkah Arrival Hub" },
   Kaaba: { lat: 21.4225, lng: 39.8262, label: "Al Kaabah" },
   Masjid_al_Haram_Perimeter: { lat: 21.4202, lng: 39.8279, label: "Masjid al-Haram Perimeter" },
   Tawaf_Area: { lat: 21.4227, lng: 39.8263, label: "Tawaf Area" },
@@ -11,6 +14,7 @@ const siteGps = {
   Mina_Camps_Core: { lat: 21.4174, lng: 39.9018, label: "Mina Camps Core" },
   Mina_West_Gate: { lat: 21.4217, lng: 39.8888, label: "Mina West Gate" },
   Mina_East_Gate: { lat: 21.4139, lng: 39.9135, label: "Mina East Gate" },
+  Sacrifice_Zone: { lat: 21.4212, lng: 39.8974, label: "Sacrifice Zone" },
   Jamarat_Bridge: { lat: 21.4235, lng: 39.8939, label: "Jamarat Bridge" },
   Jamarat_Complex: { lat: 21.424, lng: 39.8928, label: "Jamarat Complex" },
   Jamarat: { lat: 21.4231, lng: 39.8942, label: "Jamarat" },
@@ -33,12 +37,15 @@ const siteGps = {
 };
 
 const holyRoutes = [
-  ["Kaaba", "Masjid_al_Haram_Perimeter", "Mina_West_Gate", "Mina_Camps_Core", "Arafat_Main_Field", "Muzdalifah_Open_Area", "Jamarat_Complex", "Kaaba"],
-  ["Mina_Camp_4", "Jamarat_Bridge", "Arafat_Gate", "Arafat_Main_Field"],
+  ["Makkah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area", "Mina_West_Gate", "Mina_Camps_Core", "Arafat_Main_Field", "Muzdalifah_Open_Area", "Jamarat_Complex", "Sacrifice_Zone"],
+  ["Mina_Camp_4", "Jamarat_Bridge", "Jamarat_Complex", "Sacrifice_Zone", "Mina_Camps_Core"],
   ["Aziziyah_Zone", "Shade_Corridor", "Transit_Corridor", "Muzdalifah_Open_Area"]
 ];
 
 const initialLocationOptions = [
+  "Makkah_Airport",
+  "Pilgrim_Country_Airport",
+  "Makkah_Arrival_Hub",
   "Masjid_al_Haram_Perimeter",
   "Aziziyah_Zone",
   "Makkah_Bus_Station",
@@ -80,10 +87,14 @@ const hazardOptions = [
 ];
 
 const groupLocationOptions = [
+  "Makkah_Airport",
+  "Pilgrim_Country_Airport",
+  "Makkah_Arrival_Hub",
   "Mina_Camp_1",
   "Mina_Camp_2",
   "Mina_Camp_4",
   "Mina_Camps_Core",
+  "Sacrifice_Zone",
   "Jamarat_Bridge",
   "Jamarat_Complex",
   "Arafat_Gate",
@@ -192,6 +203,11 @@ const manualForm = document.querySelector("#manualForm");
 const randomForm = document.querySelector("#randomForm");
 const environmentForm = document.querySelector("#environmentForm");
 const environmentTick = document.querySelector("#environmentTick");
+const environmentDayLabel = document.querySelector("#environmentDayLabel");
+const environmentLocationLabel = document.querySelector("#environmentLocationLabel");
+const environmentRitualLabel = document.querySelector("#environmentRitualLabel");
+const environmentNextRitualLabel = document.querySelector("#environmentNextRitualLabel");
+const resetDaysButton = document.querySelector("#resetDaysButton");
 const analyticsChartCanvas = document.querySelector("#analyticsChart");
 
 let agents = [];
@@ -200,6 +216,8 @@ let mapLayerGroup;
 let routeLayerGroup;
 let heatLayer;
 let analyticsChart;
+let mapHasInitialFit = false;
+let agentMarkers = new Map();
 
 const rosterFilters = {
   searchQuery: "",
@@ -264,10 +282,10 @@ function populateSelectOptions(formRef, name, options, defaultValue) {
 }
 
 function initializeScenarioOptions() {
-  populateSelectOptions(manualForm, "initial_node", initialLocationOptions, "Mina_Camp_4");
+  populateSelectOptions(manualForm, "initial_node", initialLocationOptions, "Makkah_Airport");
   populateSelectOptions(manualForm, "target_node", targetLocationOptions, "Arafat_Main_Field");
   populateSelectOptions(environmentForm, "hazard", hazardOptions, "none");
-  populateSelectOptions(environmentForm, "group_location", groupLocationOptions, "Mina_Camp_4");
+  populateSelectOptions(environmentForm, "group_location", groupLocationOptions, "Makkah_Airport");
   populateSelectOptions(environmentForm, "alternate_node", alternateNodeOptions, "Cooling_Station_1");
   populateSelectOptions(environmentForm, "panic_node", panicNodeOptions, "Emergency_Point_1");
 }
@@ -318,12 +336,16 @@ function buildPilgrimIcon(status) {
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
   const items = [
+    ["Current day", summary.simulation_day_label],
+    ["Current location", siteGps[summary.leading_current_location]?.label || summary.leading_current_location || "None"],
+    ["Current ritual", summary.current_ritual || "None"],
+    ["Next ritual", summary.next_ritual || "None"],
     ["Total agents", summary.total_agents],
     ["Stable", summary.stable_agents],
     ["Need support", summary.needs_support_agents],
     ["High risk", summary.high_risk_agents],
     ["Panicking", summary.panicking_agents],
-    ["Scenario tick", summary.simulation_tick],
+    ["Ritual tick", summary.simulation_tick],
     ["Severity index", `${summary.severity_index}%`],
     ["Avg stress", summary.avg_stress],
     ["Avg hydration", summary.avg_hydration]
@@ -344,9 +366,9 @@ function ensureMap() {
 
   map = L.map(mapCanvas, {
     zoomControl: true,
-    minZoom: 10,
+    minZoom: 9,
     maxZoom: 18
-  }).setView([21.392, 39.924], 12);
+  }).setView([21.49, 39.56], 10);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -356,10 +378,47 @@ function ensureMap() {
   mapLayerGroup = L.layerGroup().addTo(map);
 }
 
+function ensureAirportVisible(currentAgents, environment) {
+  if (!map || !siteGps.Makkah_Airport) {
+    return;
+  }
+
+  const routePoints = holyRoutes[0]
+    .map((nodeId) => siteGps[nodeId])
+    .filter(Boolean)
+    .map((site) => [site.lat, site.lng]);
+
+  currentAgents.forEach((agent) => {
+    const site = siteGps[agent.state.current_node];
+    if (site) {
+      routePoints.push([site.lat, site.lng]);
+    }
+  });
+
+  if (routePoints.length < 2) {
+    return;
+  }
+
+  const airportLatLng = L.latLng(siteGps.Makkah_Airport.lat, siteGps.Makkah_Airport.lng);
+  const routeBounds = L.latLngBounds(routePoints);
+  const airportIsActive =
+    environment?.group_location === "Makkah_Airport" ||
+    currentAgents.some((agent) => agent.state.current_node === "Makkah_Airport");
+
+  if (!mapHasInitialFit || (airportIsActive && !map.getBounds().pad(-0.08).contains(airportLatLng))) {
+    map.fitBounds(routeBounds, {
+      padding: [28, 28],
+      maxZoom: 10
+    });
+    mapHasInitialFit = true;
+  }
+}
+
 function renderMap(currentAgents, environment) {
   ensureMap();
   routeLayerGroup.clearLayers();
   mapLayerGroup.clearLayers();
+  agentMarkers = new Map();
   renderRoutes();
   renderHeatmap(currentAgents, environment);
 
@@ -403,12 +462,15 @@ function renderMap(currentAgents, environment) {
     );
 
     marker.addTo(mapLayerGroup);
+    agentMarkers.set(agent.profile.pilgrim_id, marker);
     marker.on("mouseover", () => marker.openTooltip());
     marker.on("click", () => {
       marker.openPopup();
       scrollToAgent(agent.profile.pilgrim_id);
     });
   });
+
+  ensureAirportVisible(currentAgents, environment);
 }
 
 function renderRoutes() {
@@ -581,6 +643,9 @@ function renderAgents(currentAgents) {
 
     card.dataset.agentId = agent.profile.pilgrim_id;
     card.classList.add(riskClass);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("title", "Focus this pilgrim on the map");
     fragment.querySelector(".agent-id").textContent = agent.profile.pilgrim_id;
     fragment.querySelector(".agent-title").textContent = `${agent.profile.nationality} pilgrim`;
     fragment.querySelector(".status-pill").textContent = status;
@@ -593,15 +658,34 @@ function renderAgents(currentAgents) {
     ].join("");
 
     const detailGrid = fragment.querySelector(".detail-grid");
+    const ritualProgress = agent.memory.long_term.ritual_progress || [];
+    const ritualSchedule = agent.memory.long_term.ritual_schedule || [];
     detailGrid.innerHTML = [
-      detailBlock("Route", `${agent.state.current_node} -> ${agent.state.target_node}`),
+      detailBlock("Current day", agent.state.ritual_day_label || "Upon Arrival in Makkah"),
+      detailBlock("Current ritual", agent.state.current_ritual || "Not Started"),
+      detailBlock("Next ritual", agent.state.next_ritual || "Tawaf Al-Qudoum (Arrival Tawaf)"),
+      detailBlock("Next ritual day", agent.state.next_ritual_day_label || "Upon Arrival in Makkah"),
+      detailBlock("Schedule status", agent.state.ritual_window_open ? "Ready on this tick" : "Waiting for next tick"),
+      detailBlock("Current location", siteGps[agent.state.current_node]?.label || agent.state.current_node),
+      detailBlock("Ritual location", siteGps[agent.state.target_node]?.label || agent.state.target_node),
       detailBlock("Group", agent.profile.group_id),
       detailBlock("Mobility", agent.profile.mobility),
       detailBlock("Language", agent.profile.language),
       detailBlock("Fatigue", agent.state.fatigue.toFixed(1)),
+      detailBlock("Ritual progress", `${ritualProgress.length}/${ritualSchedule.length || 0} complete`),
       detailBlock("Memory", (agent.memory.short_term.recent_nodes || []).join(", ") || "Fresh agent"),
       detailBlock("Conditions", (agent.profile.chronic_conditions || []).join(", ") || "None")
     ].join("");
+
+    card.addEventListener("click", () => {
+      focusAgentOnMap(agent.profile.pilgrim_id);
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        focusAgentOnMap(agent.profile.pilgrim_id);
+      }
+    });
 
     agentGrid.appendChild(fragment);
   });
@@ -723,7 +807,7 @@ function resetManualDefaults() {
   manualForm.language.value = "Arabic";
   manualForm.mobility.value = "0.90";
   manualForm.risk_tolerance.value = "0.5";
-  manualForm.initial_node.value = "Mina_Camp_4";
+  manualForm.initial_node.value = "Makkah_Airport";
   manualForm.target_node.value = "Arafat_Main_Field";
 }
 
@@ -774,6 +858,52 @@ function applyEnvironmentForm(environment) {
   environmentForm.alternate_node.value = environment.alternate_node;
   environmentForm.panic_node.value = environment.panic_node;
   environmentTick.textContent = environment.tick;
+  if (environmentDayLabel) {
+    environmentDayLabel.textContent = environment.simulation_day_label;
+  }
+  if (environmentLocationLabel) {
+    environmentLocationLabel.textContent =
+      siteGps[environment.group_location]?.label || environment.group_location || "None";
+  }
+  if (environmentRitualLabel) {
+    environmentRitualLabel.textContent = environment.current_ritual || "Not Started";
+  }
+  if (environmentNextRitualLabel) {
+    environmentNextRitualLabel.textContent = environment.next_ritual || "Tawaf Al-Qudoum (Arrival Tawaf)";
+  }
+}
+
+function focusAgentOnMap(agentId) {
+  ensureMap();
+
+  const marker = agentMarkers.get(agentId);
+  if (marker) {
+    const latLng = marker.getLatLng();
+    map.flyTo(latLng, Math.max(map.getZoom(), 13), {
+      animate: true,
+      duration: 0.9
+    });
+    marker.openPopup();
+    marker.openTooltip();
+    mapCanvas?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+
+  const agent = agents.find((item) => item.profile.pilgrim_id === agentId);
+  if (!agent) {
+    return;
+  }
+
+  const site = siteGps[agent.state.current_node];
+  if (!site) {
+    return;
+  }
+
+  map.flyTo([site.lat, site.lng], Math.max(map.getZoom(), 13), {
+    animate: true,
+    duration: 0.9
+  });
+  mapCanvas?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 async function refreshAll() {
@@ -790,6 +920,10 @@ async function refreshAll() {
   renderAgents(agents);
   renderChart(agents);
   applyEnvironmentForm(environmentResponse.environment);
+  if (environmentLocationLabel) {
+    environmentLocationLabel.textContent =
+      siteGps[summary.leading_current_location]?.label || summary.leading_current_location || "None";
+  }
 }
 
 applyRosterFiltersButton?.addEventListener("click", applyRosterFilters);
@@ -835,6 +969,16 @@ environmentForm.addEventListener("submit", async (event) => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
+  });
+
+  await refreshAll();
+});
+
+resetDaysButton?.addEventListener("click", async () => {
+  await fetchJson("/api/simulate/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
   });
 
   await refreshAll();
