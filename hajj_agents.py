@@ -681,18 +681,23 @@ class PilgrimAgent:
         visible_group_node = environment_data.get("group_location")
         group_locations = environment_data.get("group_locations")
 
-        stress_gain = max(0.0, density - 4.0) * 1.4 + max(0.0, temperature - 36.0) * 0.35
-        fatigue_gain = max(0.5, 1.5 - self.profile.mobility) + max(0.0, temperature - 34.0) * 0.15
-        hydration_loss = max(0.8, (temperature - 28.0) * 0.28)
+        # Each tick now represents a long ritual/day window, so baseline exposure
+        # should wear pilgrims down more than a short real-time step.
+        stress_gain = max(0.0, density - 4.0) * 1.7 + max(0.0, temperature - 36.0) * 0.45
+        fatigue_gain = max(1.2, 2.2 - self.profile.mobility) + max(0.0, temperature - 34.0) * 0.24
+        hydration_loss = max(4.5, (temperature - 28.0) * 0.45 + 2.2)
 
         if self.profile.health_status.lower() != "stable":
-            fatigue_gain += 0.5
-            stress_gain += 2.0
+            fatigue_gain += 0.9
+            stress_gain += 2.4
 
         if self.state.is_with_group:
             stress_gain = max(0.0, stress_gain - 1.0)
         else:
             stress_gain += 2.0
+
+        if density >= 6.0:
+            hydration_loss += 0.8
 
         if group_locations and self.profile.group_id in group_locations:
             from collections import Counter
@@ -717,6 +722,16 @@ class PilgrimAgent:
                 "route_congestion": 1.7,
             }.get(str(hazard), 1.2)
             stress_gain += hazard_stress_boost
+
+            hydration_hazard_boost = {
+                "extreme_heat": 2.2,
+                "heat_stress": 1.8,
+                "crowd_bottleneck": 1.0,
+                "stampede_risk": 1.0,
+                "route_congestion": 0.8,
+                "transport_delay": 0.8,
+            }.get(str(hazard), 0.4)
+            hydration_loss += hydration_hazard_boost
 
         self.state.stress = min(100.0, self.state.stress + stress_gain)
         self.state.fatigue = min(100.0, self.state.fatigue + fatigue_gain)
@@ -754,6 +769,51 @@ class PilgrimAgent:
             self.memory.social.group_last_seen_node = visible_group_node
             self.state.is_with_group = visible_group_node == self.state.current_node
 
+    def _apply_travel_load(
+        self,
+        destination: str,
+        environment_data: dict,
+        load_multiplier: float = 1.0,
+        stress_relief: float = 0.0,
+    ) -> None:
+        route = self._resolve_route(destination)
+        hops = max(0, len(route) - 1)
+        if hops <= 0:
+            self._move_one_hop(destination)
+            return
+
+        temperature = float(environment_data.get("temperature", 32.0))
+        density = float(environment_data.get("density", 0.0))
+        hazard = str(environment_data.get("hazard") or "")
+        mobility_penalty = max(0.0, 1.0 - self.profile.mobility)
+
+        travel_hydration_loss = (
+            (2.1 * hops) +
+            (mobility_penalty * 5.0) +
+            max(0.0, temperature - 35.0) * 0.25
+        ) * load_multiplier
+        travel_fatigue_gain = (
+            (1.6 * hops) +
+            (mobility_penalty * 4.5) +
+            max(0.0, temperature - 34.0) * 0.16
+        ) * load_multiplier
+        travel_stress_gain = (
+            (1.0 * hops) +
+            max(0.0, density - 5.0) * 0.7
+        ) * load_multiplier
+
+        if hazard in {"extreme_heat", "heat_stress"}:
+            travel_hydration_loss += 1.4 * load_multiplier
+        if hazard in {"crowd_bottleneck", "stampede_risk", "route_congestion"}:
+            travel_stress_gain += 1.3 * load_multiplier
+
+        self.state.hydration = max(0.0, self.state.hydration - travel_hydration_loss)
+        self.state.fatigue = min(100.0, self.state.fatigue + travel_fatigue_gain)
+        self.state.stress = min(100.0, max(0.0, self.state.stress + travel_stress_gain - stress_relief))
+        self.state.current_node = destination
+        self.state.active_route = route
+        self.memory.long_term.known_routes[destination] = route
+
     def _execute_action(self, action: str, environment_data: dict) -> None:
         self.memory.short_term.remember_node(self.state.current_node)
         self.memory.short_term.remember_event(f"Tick {self.state.simulation_tick}: {action}")
@@ -774,19 +834,27 @@ class PilgrimAgent:
 
         if action == "AVOID_CROWD":
             alternate_node = environment_data.get("alternate_node", self.state.current_node)
-            self._move_one_hop(alternate_node)
-            self.state.stress = max(0.0, self.state.stress - 6.0)
+            self._apply_travel_load(
+                alternate_node,
+                environment_data,
+                load_multiplier=0.85,
+                stress_relief=6.0,
+            )
             return
 
         if action == "ENTER_PANIC_MODE":
             self.state.is_panicking = True
             panic_node = environment_data.get("panic_node", self.state.current_node)
-            self._move_one_hop(panic_node)
+            self._apply_travel_load(
+                panic_node,
+                environment_data,
+                load_multiplier=1.35,
+            )
             return
 
         if action.startswith("MOVE_TO_"):
             destination = action.replace("MOVE_TO_", "", 1)
-            self._move_one_hop(destination)
+            self._apply_travel_load(destination, environment_data)
 
     def get_snapshot(self) -> dict:
         return {
