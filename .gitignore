@@ -1,8 +1,50 @@
-venv3081/
+# =========================
+# Python & Virtual Environments
+# =========================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+.venv/
+Pipfile.lock
+
+# =========================
+# LaTeX (Paper Compilation)
+# =========================
+# We ignore the junk files LaTeX creates, but KEEP your final CS3081-Paper.pdf
+*.aux
+*.bbl
+*.blg
+*.fls
+*.log
+*.out
+*.toc
+*.fdb_latexmk
+*.synctex.gz
+*.pdfsync
+
+# =========================
+# OS Generated Files
+# =========================
 .DS_Store
+.DS_Store?
+._*
+.Trashes
+ehthumbs.db
+Thumbs.db
 
+# =========================
+# Web / Frontend (Just in case)
+# =========================
+node_modules/
+npm-debug.log
 
-AI Project Tasks.docx
-AI Project Tasks.pdf
+# =========================
+# IDE & Editor Folders
+# =========================
+.idea/
+# Note: I left .vscode/ un-ignored because you already committed it. 
+# If you want to ignore VS Code settings in the future, remove the '#' below:
+# .vscode/
