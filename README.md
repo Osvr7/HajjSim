@@ -11,7 +11,7 @@ Current crowd management is heavily reactive; HajjSim aims to make it **proactiv
 ## 📸 Dashboard Preview
 > **[TODO: Add an image of your main dashboard here. Save the image as `dashboard_map.png` in your repository]**
 > 
-> `![HajjSim Dashboard](dashboard_map.png)`
+> `!![HajjSim Dashboard](assets/dashboard_map.png)`
 
 ## ✨ Core Features
 * **4-Layer Agent Anatomy:** Pilgrim agents operate with distinct cognitive profiles: Static (DNA), Dynamic (Vitals), Memory, and a Behavior Engine (*Perceive → Decide → Act* loop).
@@ -28,7 +28,7 @@ Current crowd management is heavily reactive; HajjSim aims to make it **proactiv
 
 > **[TODO: Add your Agent Architecture diagram here. Save the image as `agent_diagram.png` in your repository]**
 > 
-> `![Agent Architecture](agent_diagram.png)`
+> `![Agent Architecture](assets/agent_diagram.png)`
 
 ## 🚀 Quick Start
 
