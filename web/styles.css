@@ -1,4 +1,5 @@
 :root {
+  /* Theme colors shared across the dashboard. */
   --bg-mint: #edf8f0;
   --bg-sage: #dceee1;
   --bg-white: #fbfefc;
@@ -15,10 +16,12 @@
 }
 
 * {
+  /* Make width calculations include padding and borders. */
   box-sizing: border-box;
 }
 
 body {
+  /* Page-level typography and soft map-dashboard background. */
   margin: 0;
   min-height: 100vh;
   font-family: "Tajawal", sans-serif;
@@ -42,12 +45,14 @@ body::before {
 }
 
 .page-shell {
+  /* Constrains the full dashboard while staying responsive. */
   width: min(1360px, calc(100% - 28px));
   margin: 0 auto;
   padding: 26px 0 40px;
 }
 
 .hero {
+  /* Top area for the title and live simulation summary. */
   display: block;
   margin-bottom: 18px;
 }
@@ -111,6 +116,7 @@ button {
 
 .hero-stats,
 .panel {
+  /* Shared glass-like panel treatment for dashboard surfaces. */
   background: var(--panel);
   border: 1px solid rgba(255, 255, 255, 0.68);
   border-radius: 22px;
@@ -126,6 +132,7 @@ button {
 }
 
 .summary-section {
+  /* Groups related summary metrics inside the hero area. */
   display: grid;
   gap: 8px;
   padding: 10px 12px;
@@ -186,6 +193,7 @@ button {
 }
 
 .layout {
+  /* Two-column desktop layout: controls on the left, map on the right. */
   display: grid;
   grid-template-columns: minmax(380px, 430px) 1fr;
   gap: 16px;
@@ -193,6 +201,7 @@ button {
 }
 
 .panel {
+  /* Reusable spacing for every dashboard panel. */
   padding: 18px;
 }
 
@@ -205,6 +214,7 @@ button {
 }
 
 .stack {
+  /* Vertical spacing helper for forms. */
   display: grid;
   gap: 12px;
 }
@@ -253,6 +263,7 @@ select[multiple] {
 }
 
 button {
+  /* Shared button shape and hover animation. */
   border: 0;
   border-radius: 999px;
   padding: 12px 18px;
@@ -291,6 +302,7 @@ button:hover {
 }
 
 .playback-controls {
+  /* Compact toolbar for manual stepping and automatic playback. */
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
@@ -311,6 +323,7 @@ button:hover {
 }
 
 .map-canvas {
+  /* Fixed-height map area so Leaflet can calculate tiles correctly. */
   min-height: 740px;
   border-radius: 20px;
   overflow: hidden;
@@ -322,6 +335,7 @@ button:hover {
 }
 
 .map-legend {
+  /* Overlay legend explaining marker colors on top of the map. */
   position: absolute;
   right: 12px;
   bottom: 12px;
@@ -362,6 +376,7 @@ button:hover {
 .legend-dot.panic { background: #6d3fd1; }
 
 .pilgrim-icon-wrapper {
+  /* Leaflet wrapper for custom HTML pilgrim markers. */
   background: transparent;
   border: 0;
 }
@@ -412,6 +427,7 @@ button:hover {
 .pilgrim-marker.panicking .pilgrim-body { background: #6d3fd1; }
 
 .chart-panel {
+  /* Full-width panel for the operational trend chart. */
   margin-bottom: 16px;
 }
 
@@ -421,12 +437,14 @@ button:hover {
 }
 
 .agent-grid {
+  /* Responsive card grid for the agent roster. */
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
 }
 
 .roster-toolbar {
+  /* Search, filter, sort, and metadata controls for the roster. */
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr)) repeat(3, auto) minmax(180px, 1fr);
   gap: 10px;
@@ -472,6 +490,7 @@ button:hover {
 }
 
 .agent-card {
+  /* Individual pilgrim card with status-sensitive background color. */
   background: var(--panel-strong);
   border-radius: 18px;
   border: 1px solid var(--line);
@@ -511,6 +530,7 @@ button:hover {
 }
 
 .agent-card-focus {
+  /* Temporary highlight applied when a marker or search result focuses a card. */
   outline: 3px solid rgba(255, 208, 82, 0.95);
   box-shadow: 0 0 0 8px rgba(255, 208, 82, 0.28);
   animation: focusPulse 0.75s ease-in-out 2;
@@ -529,6 +549,7 @@ button:hover {
 }
 
 .agent-hover-tooltip {
+  /* Dark Leaflet tooltip shown when hovering over an agent marker. */
   background: rgba(20, 32, 28, 0.92);
   color: #f7f1e3;
   border: 1px solid rgba(255, 255, 255, 0.24);
@@ -576,6 +597,7 @@ button:hover {
 
 .mini-stats,
 .detail-grid {
+  /* Small internal grids used inside each agent card. */
   display: grid;
   gap: 8px;
 }
@@ -602,6 +624,7 @@ button:hover {
 }
 
 @media (max-width: 1180px) {
+  /* Tablet layout: collapse the main dashboard to one column. */
   .hero,
   .layout {
     grid-template-columns: 1fr;
@@ -622,6 +645,7 @@ button:hover {
 }
 
 @media (max-width: 680px) {
+  /* Phone layout: stack controls and reduce map/chart heights. */
   .page-shell {
     width: min(100% - 16px, 1360px);
   }

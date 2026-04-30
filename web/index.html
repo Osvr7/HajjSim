@@ -12,6 +12,7 @@
 </head>
 <body>
   <div class="page-shell">
+    <!-- Hero section: project title, short description, and live summary cards. -->
     <header class="hero">
       <div class="hero-content">
         <p class="eyebrow">HajjSim Agent Studio</p>
@@ -25,6 +26,7 @@
     </header>
 
     <main class="layout">
+      <!-- Left panel: forms for creating manual or random pilgrim agents. -->
       <section class="panel control-panel">
         <div class="panel-header">
           <h2>Create Pilgrim Agents</h2>
@@ -170,6 +172,7 @@
 
       </section>
 
+      <!-- Main panel: interactive map plus environment controls for simulation. -->
       <section class="panel map-panel">
         <div class="panel-header">
           <h2>Live GPS Map</h2>
@@ -275,6 +278,7 @@
       </section>
     </main>
 
+    <!-- Operational chart: shows stress and risk trends over simulation ticks. -->
     <section class="panel chart-panel">
       <div class="panel-header">
         <h2>Operational Graph</h2>
@@ -283,6 +287,7 @@
       <canvas id="analyticsChart" height="120"></canvas>
     </section>
 
+    <!-- Agent roster: searchable/filterable cards for individual pilgrim state. -->
     <section class="panel list-panel">
       <div class="panel-header">
         <h2>Agent Roster</h2>
@@ -337,6 +342,7 @@
     </section>
   </div>
 
+  <!-- Template cloned by app.js for every pilgrim card in the roster. -->
   <template id="agentCardTemplate">
     <article class="agent-card">
       <div class="agent-card-top">
@@ -351,6 +357,7 @@
     </article>
   </template>
 
+  <!-- External map/chart libraries followed by the dashboard controller script. -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>

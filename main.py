@@ -1,9 +1,17 @@
+"""Command-line runner for inspecting and stepping HajjSim agents.
+
+The web dashboard is the main interface, but this file provides a lightweight
+terminal loop for loading the seed pilgrims, printing agent anatomy, generating
+synthetic agents, and advancing the ritual simulation without a browser.
+"""
+
 import json
 
 from hajj_agents import AgentFactory, PilgrimAgent, StaticProfile, get_simulation_tick_payload
 
 
 def build_profile(item):
+    """Convert one JSON pilgrim record into the static agent profile layer."""
     return StaticProfile(
         pilgrim_id=item["pilgrim_id"],
         age=item["age"],
@@ -22,22 +30,27 @@ def load_agents_from_file(filename):
     with open(filename, "r", encoding="utf-8") as file:
         data = json.load(file)
 
+    # Keep agents keyed by ID so the terminal user can inspect any pilgrim fast.
     agents_dictionary = {}
 
     for item in data:
         profile = build_profile(item)
+
+        # Rebuild the live agent object from saved profile/location data.
         agent = PilgrimAgent(
             static_profile=profile,
             initial_node=item["initial_node"],
             target_node=item.get("target_node", "Arafat"),
         )
 
+        # Restore social memory so group relationships survive loading.
         social_memory = item.get("social_memory", {})
         agent.memory.social.leader_id = social_memory.get("leader_id")
         agent.memory.social.known_companions = social_memory.get("known_companions", [])
         agent.memory.social.help_contacts = social_memory.get("help_contacts", [])
         agent.memory.social.group_last_seen_node = social_memory.get("group_last_seen_node")
 
+        # Restore route knowledge, hazards, preferences, and completed rituals.
         long_term_memory = item.get("long_term_memory", {})
         agent.memory.long_term.known_routes = long_term_memory.get("known_routes", {})
         agent.memory.long_term.known_hazards = long_term_memory.get("known_hazards", {})
@@ -100,12 +113,14 @@ def display_agent_info(agent):
 
 
 def main():
+    """Run an interactive terminal menu for agent inspection and simulation."""
     print("Loading HajjSim Environment...")
     agents = load_agents_from_file("pilgrims.json")
     print(f"Successfully loaded {len(agents)} agents.\n")
     factory = AgentFactory(seed=42)
     simulation_tick = -1
 
+    # The loop accepts small commands instead of running a full web server.
     while True:
         print("Available Pilgrim IDs:", ", ".join(agents.keys()))
         user_input = input(
@@ -117,6 +132,7 @@ def main():
             break
 
         if user_input.lower() == "step":
+            # Each CLI step moves the whole population through one ritual stage.
             simulation_tick += 1
             tick_state = get_simulation_tick_payload(simulation_tick)
             environment_data = {
@@ -141,6 +157,7 @@ def main():
             continue
 
         if user_input.lower().startswith("generate"):
+            # Create extra synthetic agents with seeded random demographics.
             parts = user_input.split()
             count = int(parts[1]) if len(parts) > 1 else 10
             generated_agents = factory.generate_agents(count=count, start_index=len(agents) + 1)
@@ -149,6 +166,7 @@ def main():
             continue
 
         if user_input in agents:
+            # Print one pilgrim's profile, live state, and memories.
             display_agent_info(agents[user_input])
         else:
             print("Invalid ID. Please try again.\n")

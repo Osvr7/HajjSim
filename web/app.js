@@ -1,3 +1,4 @@
+// Geographic coordinates for every simulation node displayed on the Leaflet map.
 const siteGps = {
   Jeddah_Airport: { lat: 21.6702, lng: 39.1525, label: "Jeddah Airport" },
   Pilgrim_Country_Airport: { lat: 24.7136, lng: 46.6753, label: "Pilgrim Country Airport" },
@@ -36,12 +37,14 @@ const siteGps = {
   Emergency_Point: { lat: 21.4087, lng: 39.9114, label: "Emergency Point" }
 };
 
+// Route overlays shown on the map so users can see major movement corridors.
 const holyRoutes = [
   ["Jeddah_Airport", "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Tawaf_Area", "Mina_West_Gate", "Mina_Camps_Core", "Arafat_Main_Field", "Muzdalifah_Open_Area", "Jamarat_Complex", "Sacrifice_Zone"],
   ["Mina_Camp_4", "Jamarat_Bridge", "Jamarat_Complex", "Sacrifice_Zone", "Mina_Camps_Core"],
   ["Aziziyah_Zone", "Shade_Corridor", "Transit_Corridor", "Muzdalifah_Open_Area"]
 ];
 
+// Form options for where a manually created pilgrim can start.
 const initialLocationOptions = [
   "Jeddah_Airport",
   "Pilgrim_Country_Airport",
@@ -60,6 +63,7 @@ const initialLocationOptions = [
   "Muzdalifah"
 ];
 
+// Form options for the initial target before the ritual schedule takes over.
 const targetLocationOptions = [
   "Tawaf_Area",
   "Sai_Corridor",
@@ -72,6 +76,7 @@ const targetLocationOptions = [
   "Jamarat"
 ];
 
+// Hazard options that can be injected into the simulation environment.
 const hazardOptions = [
   "none",
   "extreme_heat",
@@ -86,6 +91,7 @@ const hazardOptions = [
   "route_closure"
 ];
 
+// Locations used to represent where the main group is currently visible.
 const groupLocationOptions = [
   "Jeddah_Airport",
   "Pilgrim_Country_Airport",
@@ -105,6 +111,7 @@ const groupLocationOptions = [
   "Masjid_al_Haram_Perimeter"
 ];
 
+// Safer fallback destinations used when an agent decides to avoid a crowd.
 const alternateNodeOptions = [
   "Cooling_Station_1",
   "Shade_Corridor",
@@ -116,6 +123,7 @@ const alternateNodeOptions = [
   "Arafat_Gate"
 ];
 
+// Emergency destinations used when an agent enters panic mode.
 const panicNodeOptions = [
   "Emergency_Point_1",
   "Emergency_Point_2",
@@ -126,6 +134,7 @@ const panicNodeOptions = [
   "Jamarat_Bridge"
 ];
 
+// Shared color palette for marker and roster risk statuses.
 const STATUS_COLORS = {
   stable: "#2b865f",
   needs_support: "#a67231",
@@ -133,6 +142,7 @@ const STATUS_COLORS = {
   panicking: "#6d3fd1"
 };
 
+// Country list used to make manual agent creation more realistic.
 const allCountries = [
   "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia",
   "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium",
@@ -159,6 +169,7 @@ const allCountries = [
   "Vatican City", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe", "Kosovo"
 ];
 
+// Auto-select the most likely language after choosing a nationality.
 const countryLanguageMap = {
   "Saudi Arabia": "Arabic",
   "Egypt": "Arabic",
@@ -187,6 +198,7 @@ const countryLanguageMap = {
   "United Kingdom": "English"
 };
 
+// Main DOM references used throughout rendering and event handling.
 const summaryCards = document.querySelector("#summaryCards");
 const mapCanvas = document.querySelector("#mapCanvas");
 const agentGrid = document.querySelector("#agentGrid");
@@ -215,6 +227,7 @@ const resetDaysButton = document.querySelector("#resetDaysButton");
 const restartDashboardButton = document.querySelector("#restartDashboardButton");
 const analyticsChartCanvas = document.querySelector("#analyticsChart");
 
+// Frontend runtime state mirrored from the backend API.
 let agents = [];
 let map;
 let siteLayerGroup;
@@ -230,6 +243,7 @@ let playbackTimer = null;
 let simulationBusy = false;
 let routeLayersReady = false;
 
+// Current roster filter/sort settings used by both cards and map markers.
 const rosterFilters = {
   searchQuery: "",
   groupId: "all",
@@ -238,6 +252,7 @@ const rosterFilters = {
   sortMode: "default"
 };
 
+// Approximate node capacities used to turn agent counts into heatmap intensity.
 const NODE_PRESSURE_BASELINES = {
   Kaaba: 10,
   Masjid_al_Haram_Perimeter: 16,
@@ -272,6 +287,7 @@ const NODE_PRESSURE_BASELINES = {
   Emergency_Point: 6
 };
 
+// Populate the nationality dropdown from the full country list.
 function populateNationalityOptions() {
   const nationalitySelect = manualForm.elements.nationality;
   if (!nationalitySelect) {
@@ -291,6 +307,7 @@ function populateNationalityOptions() {
   nationalitySelect.value = "Saudi Arabia";
 }
 
+// Update the language dropdown when the selected nationality has a known default.
 function syncLanguageWithNationality() {
   const nationalitySelect = manualForm.elements.nationality;
   const languageSelect = manualForm.elements.language;
@@ -308,6 +325,7 @@ function syncLanguageWithNationality() {
   });
 }
 
+// Replace a select element's options with a supplied list of simulation nodes.
 function populateSelectOptions(formRef, name, options, defaultValue) {
   const select = formRef?.elements?.[name];
   if (!select) {
@@ -327,6 +345,7 @@ function populateSelectOptions(formRef, name, options, defaultValue) {
   }
 }
 
+// Initialize all node/hazard dropdowns with current scenario options.
 function initializeScenarioOptions() {
   populateSelectOptions(manualForm, "initial_node", initialLocationOptions, "Jeddah_Airport");
   populateSelectOptions(manualForm, "target_node", targetLocationOptions, "Arafat_Main_Field");
@@ -336,6 +355,7 @@ function initializeScenarioOptions() {
   populateSelectOptions(environmentForm, "panic_node", panicNodeOptions, "Emergency_Point_1");
 }
 
+// Fetch JSON from the backend and throw a readable error for failed requests.
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -344,6 +364,7 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 
+// Convert vitals into a dashboard risk category when the agent is not panicking.
 function deriveOperationalRisk(agent) {
   const stress = Number(agent.state.stress || 0);
   const fatigue = Number(agent.state.fatigue || 0);
@@ -358,6 +379,7 @@ function deriveOperationalRisk(agent) {
   return "stable";
 }
 
+// Choose the status color key for one agent.
 function getAgentStatus(agent) {
   if (agent.state.is_panicking) {
     return "panicking";
@@ -365,6 +387,7 @@ function getAgentStatus(agent) {
   return deriveOperationalRisk(agent);
 }
 
+// Build the small human-shaped Leaflet marker used for pilgrim positions.
 function buildPilgrimIcon(status) {
   return L.divIcon({
     className: "pilgrim-icon-wrapper",
@@ -379,10 +402,12 @@ function buildPilgrimIcon(status) {
   });
 }
 
+// Read the playback interval selected by the user.
 function getPlaybackDelay() {
   return Number(playbackSpeedSelect?.value || 800);
 }
 
+// Enable/disable playback buttons based on whether auto-simulation is running.
 function setPlaybackState(isPlaying) {
   if (startSimulationButton) {
     startSimulationButton.disabled = isPlaying;
@@ -392,6 +417,7 @@ function setPlaybackState(isPlaying) {
   }
 }
 
+// Stop automatic simulation ticks and reset the playback buttons.
 function stopPlayback() {
   if (playbackTimer) {
     clearInterval(playbackTimer);
@@ -400,6 +426,7 @@ function stopPlayback() {
   setPlaybackState(false);
 }
 
+// Render the top summary cards from aggregate backend metrics.
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
   const currentLocationLabel =
@@ -452,6 +479,7 @@ function renderSummary(summary) {
   });
 }
 
+// Create the Leaflet map once, then attach base tiles and static layers.
 function ensureMap() {
   if (map) {
     return;
@@ -474,6 +502,7 @@ function ensureMap() {
   renderSiteMarkers();
 }
 
+// Keep the airport and active route visible when agents start far from Makkah.
 function ensureAirportVisible(currentAgents, environment) {
   if (!map || !siteGps.Jeddah_Airport) {
     return;
@@ -510,6 +539,7 @@ function ensureAirportVisible(currentAgents, environment) {
   }
 }
 
+// Redraw the map-dependent layers using the latest agents and environment.
 function renderMap(currentAgents, environment) {
   ensureMap();
   const visibleAgents = getDisplayedAgents(currentAgents);
@@ -519,6 +549,7 @@ function renderMap(currentAgents, environment) {
   ensureAirportVisible(currentAgents, environment);
 }
 
+// Draw the major Hajj movement corridors once.
 function renderRoutes() {
   if (routeLayersReady) {
     return;
@@ -546,6 +577,7 @@ function renderRoutes() {
   routeLayersReady = true;
 }
 
+// Add static landmark markers and let users click them to find agents there.
 function renderSiteMarkers() {
   siteLayerGroup.clearLayers();
   Object.entries(siteGps).forEach(([nodeId, site]) => {
@@ -556,6 +588,7 @@ function renderSiteMarkers() {
   });
 }
 
+// Offset markers slightly so agents at the same node remain visible.
 function getMarkerLatLng(agent, index) {
   const node = agent.state.current_node;
   const base = siteGps[node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
@@ -565,6 +598,7 @@ function getMarkerLatLng(agent, index) {
   );
 }
 
+// Smoothly animate a marker between old and new map coordinates.
 function animateMarkerTo(marker, targetLatLng, duration = 420) {
   const start = marker.getLatLng();
   const startTime = performance.now();
@@ -583,6 +617,7 @@ function animateMarkerTo(marker, targetLatLng, duration = 420) {
   requestAnimationFrame(step);
 }
 
+// Create, update, and remove Leaflet markers for the visible agent set.
 function renderAgentMarkers(visibleAgents) {
   const visibleIds = new Set(visibleAgents.map((agent) => agent.profile.pilgrim_id));
   agentMarkers.forEach((marker, agentId) => {
@@ -636,6 +671,7 @@ function renderAgentMarkers(visibleAgents) {
   });
 }
 
+// Render a pressure heatmap based on agent counts, density, and hazards.
 function renderHeatmap(currentAgents, environment) {
   if (typeof L.heatLayer !== "function") {
     return;
@@ -691,6 +727,7 @@ function renderHeatmap(currentAgents, environment) {
   heatLayer.addTo(map);
 }
 
+// Rebuild group filter options from the currently loaded roster.
 function populateGroupFilterOptions(currentAgents) {
   if (!groupFilterSelect) {
     return;
@@ -723,6 +760,7 @@ function populateGroupFilterOptions(currentAgents) {
   groupFilterSelect.value = rosterFilters.groupId;
 }
 
+// Keep the sort dropdown in sync with the stored filter state.
 function syncSortControl() {
   if (!sortRosterSelect) {
     return;
@@ -730,6 +768,7 @@ function syncSortControl() {
   sortRosterSelect.value = rosterFilters.sortMode;
 }
 
+// Apply search, group, health, risk, and sort controls to the roster.
 function getDisplayedAgents(currentAgents) {
   const filteredAgents = currentAgents.filter((agent) => {
     const searchQuery = rosterFilters.searchQuery.trim().toLowerCase();
@@ -763,6 +802,7 @@ function getDisplayedAgents(currentAgents) {
   }
 }
 
+// Show how many agents are visible after filtering.
 function updateRosterMeta(visibleCount, totalCount) {
   if (!rosterMeta) {
     return;
@@ -771,6 +811,7 @@ function updateRosterMeta(visibleCount, totalCount) {
   rosterMeta.textContent = `Showing ${visibleCount} of ${totalCount} pilgrims`;
 }
 
+// Render the clickable agent roster cards.
 function renderAgents(currentAgents) {
   const visibleAgents = getDisplayedAgents(currentAgents);
   agentGrid.innerHTML = "";
@@ -848,6 +889,7 @@ function renderAgents(currentAgents) {
   updateRosterMeta(visibleAgents.length, currentAgents.length);
 }
 
+// Render or update the operational line chart for stress and risk counts.
 function renderChart(history) {
   const labels = history.map((entry) => `Tick ${entry.simulation_tick}`);
   const stressSeries = history.map((entry) => Number(entry.avg_stress || 0));
@@ -938,14 +980,17 @@ function renderChart(history) {
   analyticsChart.update();
 }
 
+// Build a compact stat tile inside an agent card.
 function statBlock(label, value) {
   return `<div class="mini-stat"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
+// Build a label/value detail tile inside an agent card.
 function detailBlock(label, value) {
   return `<div class="detail-item"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
+// Scroll to one agent card and briefly highlight it.
 function scrollToAgent(agentId) {
   document.querySelectorAll(".agent-card-focus").forEach((item) => {
     item.classList.remove("agent-card-focus");
@@ -969,6 +1014,7 @@ function scrollToAgent(agentId) {
   }
 }
 
+// Focus the first agent currently located at a clicked map node.
 function focusNodeAgents(nodeId) {
   const visibleAgents = getDisplayedAgents(agents);
   const matching = visibleAgents.filter((agent) => agent.state.current_node === nodeId);
@@ -980,10 +1026,12 @@ function focusNodeAgents(nodeId) {
   scrollToAgent(targetAgents[0].profile.pilgrim_id);
 }
 
+// Deterministic jitter value used for marker separation.
 function jitter(seed, amount) {
   return ((Math.sin(seed * 12.9898) * 43758.5453) % 1) * amount;
 }
 
+// Convert the manual agent form into the API payload expected by the backend.
 function getManualPayload() {
   const data = new FormData(manualForm);
   const payload = Object.fromEntries(data.entries());
@@ -992,10 +1040,12 @@ function getManualPayload() {
   return payload;
 }
 
+// Convert the environment controls form into a simulation payload.
 function getEnvironmentPayload() {
   return Object.fromEntries(new FormData(environmentForm).entries());
 }
 
+// Restore the manual creation form to useful demo defaults.
 function resetManualDefaults() {
   manualForm.reset();
   manualForm.group_id.value = "G_200";
@@ -1016,6 +1066,7 @@ function resetManualDefaults() {
   }
 }
 
+// Read filter controls, rerender the roster, and keep the map in sync.
 function applyRosterFilters() {
   rosterFilters.searchQuery = rosterSearchInput?.value || "";
   rosterFilters.groupId = groupFilterSelect?.value || "all";
@@ -1028,11 +1079,13 @@ function applyRosterFilters() {
   }
 }
 
+// Apply only the selected sort mode to the current roster list.
 function applyRosterSort() {
   rosterFilters.sortMode = sortRosterSelect?.value || "default";
   renderAgents(agents);
 }
 
+// Reset search/filter/sort controls and show the full roster again.
 function clearRosterFilters() {
   rosterFilters.searchQuery = "";
   rosterFilters.groupId = "all";
@@ -1066,6 +1119,7 @@ syncLanguageWithNationality();
 initializeScenarioOptions();
 syncSortControl();
 
+// Copy backend environment state back into the visible controls and labels.
 function applyEnvironmentForm(environment) {
   environmentForm.density.value = environment.density;
   environmentForm.temperature.value = environment.temperature;
@@ -1089,6 +1143,7 @@ function applyEnvironmentForm(environment) {
   }
 }
 
+// Move the map view to one agent's marker or current node.
 function focusAgentOnMap(agentId) {
   ensureMap();
 
@@ -1122,6 +1177,7 @@ function focusAgentOnMap(agentId) {
   mapCanvas?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+// Fetch agents, summary, and environment together, then rerender the dashboard.
 async function refreshAll() {
   const [agentResponse, summaryResponse, environmentResponse] = await Promise.all([
     fetchJson("/api/agents"),
@@ -1140,6 +1196,7 @@ async function refreshAll() {
   applyEnvironmentForm(environmentResponse.environment);
 }
 
+// Advance the simulation by one ritual tick and refresh all UI panels.
 async function runSimulationStep() {
   if (simulationBusy) {
     return;
@@ -1158,6 +1215,7 @@ async function runSimulationStep() {
   }
 }
 
+// Start automatic repeated simulation steps at the selected speed.
 function startPlayback() {
   if (playbackTimer) {
     clearInterval(playbackTimer);
@@ -1172,6 +1230,7 @@ function startPlayback() {
   }, getPlaybackDelay());
 }
 
+// Wire roster controls to filtering/sorting behavior.
 applyRosterFiltersButton?.addEventListener("click", applyRosterFilters);
 applyRosterSortButton?.addEventListener("click", applyRosterSort);
 clearRosterFiltersButton?.addEventListener("click", clearRosterFilters);
@@ -1181,6 +1240,7 @@ healthFilterSelect?.addEventListener("change", applyRosterFilters);
 riskFilterSelect?.addEventListener("change", applyRosterFilters);
 sortRosterSelect?.addEventListener("change", applyRosterFilters);
 
+// Create one manual pilgrim from the form and reload dashboard data.
 manualForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formPayload = getManualPayload();
@@ -1195,6 +1255,7 @@ manualForm.addEventListener("submit", async (event) => {
   await refreshAll();
 });
 
+// Generate a random pilgrim population and add it to the active roster.
 randomForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = Object.fromEntries(new FormData(randomForm).entries());
@@ -1208,11 +1269,13 @@ randomForm.addEventListener("submit", async (event) => {
   await refreshAll();
 });
 
+// Run a single simulation step when the environment form is submitted.
 environmentForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await runSimulationStep();
 });
 
+// Start and pause the automatic playback loop.
 startSimulationButton?.addEventListener("click", () => {
   startPlayback();
 });
@@ -1221,12 +1284,14 @@ pauseSimulationButton?.addEventListener("click", () => {
   stopPlayback();
 });
 
+// Restart the interval if speed changes while playback is active.
 playbackSpeedSelect?.addEventListener("change", () => {
   if (playbackTimer) {
     startPlayback();
   }
 });
 
+// Reset the ritual timeline but keep the current roster.
 resetDaysButton?.addEventListener("click", async () => {
   stopPlayback();
   await fetchJson("/api/simulate/reset", {
@@ -1238,6 +1303,7 @@ resetDaysButton?.addEventListener("click", async () => {
   await refreshAll();
 });
 
+// Reload the original seed agents and restore all dashboard controls.
 restartDashboardButton?.addEventListener("click", async () => {
   stopPlayback();
   await fetchJson("/api/dashboard/reset", {
@@ -1251,6 +1317,7 @@ restartDashboardButton?.addEventListener("click", async () => {
   await refreshAll();
 });
 
+// Initial UI state and first data load.
 setPlaybackState(false);
 refreshAll().catch((error) => {
   summaryCards.innerHTML = `<div class="stat-card"><strong>Error</strong><span>${error.message}</span></div>`;

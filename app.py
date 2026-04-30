@@ -1,3 +1,10 @@
+"""HTTP backend for the HajjSim dashboard.
+
+This module serves the static web dashboard from the ``web`` folder and exposes
+small JSON API endpoints that the frontend uses to create agents, update the
+environment, advance the simulation, and read operational metrics.
+"""
+
 import json
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -15,6 +22,7 @@ from hajj_agents import (
 )
 
 
+# Project paths used by both the static file server and the API layer.
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "web"
 DATA_FILE = BASE_DIR / "pilgrims.json"
@@ -22,6 +30,12 @@ DATA_FILE = BASE_DIR / "pilgrims.json"
 
 @dataclass
 class EnvironmentState:
+    """Mutable simulation settings controlled by the dashboard.
+
+    The environment is shared by every agent during a simulation step. It stores
+    crowd density, heat, hazard type, group location, and the ritual tick.
+    """
+
     density: float = 5.0
     temperature: float = 37.0
     hazard: str = "none"
@@ -31,9 +45,11 @@ class EnvironmentState:
     tick: int = -1
 
     def _current_tick_state(self) -> dict:
+        """Return the ritual/day metadata for the current tick."""
         return get_simulation_tick_payload(self.tick)
 
     def apply_updates(self, payload: dict) -> None:
+        """Merge user-provided environment values while keeping them bounded."""
         if "density" in payload:
             self.density = max(0.0, min(10.0, float(payload["density"])))
         if "temperature" in payload:
@@ -48,6 +64,7 @@ class EnvironmentState:
             self.panic_node = str(payload["panic_node"] or self.panic_node)
 
     def reset(self) -> None:
+        """Restore environment controls to the initial dashboard state."""
         self.density = 5.0
         self.temperature = 37.0
         self.hazard = "none"
@@ -57,6 +74,7 @@ class EnvironmentState:
         self.tick = -1
 
     def to_payload(self) -> dict:
+        """Build the internal payload passed into every agent's decision loop."""
         tick_state = self._current_tick_state()
         return {
             "density": self.density,
@@ -76,6 +94,7 @@ class EnvironmentState:
         }
 
     def to_dict(self) -> dict:
+        """Build the JSON-safe environment object returned to the frontend."""
         tick_state = self._current_tick_state()
         return {
             "density": round(self.density, 2),
@@ -100,6 +119,12 @@ class EnvironmentState:
 
 
 class AgentRepository:
+    """In-memory collection of pilgrim agents.
+
+    The repository loads the seed agents from ``pilgrims.json`` and then keeps
+    generated/manual agents in memory for the current server session.
+    """
+
     def __init__(self, data_file: Path):
         self.data_file = data_file
         self.factory = AgentFactory(seed=42)
@@ -108,6 +133,7 @@ class AgentRepository:
         self.load()
 
     def load(self) -> None:
+        """Read seed pilgrim records from disk and rebuild agent objects."""
         if not self.data_file.exists():
             self.agents = {}
             self._next_index = 1
@@ -127,9 +153,11 @@ class AgentRepository:
         self._next_index = max_index + 1 if max_index else 1
 
     def list_agents(self) -> list[dict]:
+        """Return frontend-ready snapshots for all active agents."""
         return [agent.get_snapshot() for agent in self.agents.values()]
 
     def create_manual_agent(self, payload: dict) -> dict:
+        """Create one agent from the manual dashboard form."""
         pilgrim_id = payload.get("pilgrim_id") or f"P_{self._next_index:04d}"
         chronic_conditions = self._parse_conditions(payload.get("chronic_conditions", []))
 
@@ -152,12 +180,14 @@ class AgentRepository:
         return agent.get_snapshot()
 
     def generate_random_agents(self, count: int) -> list[dict]:
+        """Generate a synthetic population using demographic distributions."""
         generated = self.factory.generate_agents(count=count, start_index=self._next_index)
         self.agents.update(generated)
         self._next_index += count
         return [agent.get_snapshot() for agent in generated.values()]
 
     def step_all(self, environment_data: dict) -> list[dict]:
+        """Advance every agent once and return the action each agent selected."""
         group_locations = {}
         for agent in self.agents.values():
             group_locations.setdefault(agent.profile.group_id, []).append(agent.state.current_node)
@@ -172,13 +202,16 @@ class AgentRepository:
         return actions
 
     def reset_ritual_days(self) -> None:
+        """Restart the ritual schedule while keeping the active agent roster."""
         for agent in self.agents.values():
             agent.reset_ritual_cycle()
 
     def reset_all(self) -> None:
+        """Reload the original seed roster and remove generated session agents."""
         self.load()
 
     def _advance_index(self, pilgrim_id: str) -> None:
+        """Keep generated IDs ahead of any manually supplied numeric ID."""
         digits = "".join(char for char in pilgrim_id if char.isdigit())
         if digits:
             self._next_index = max(self._next_index, int(digits) + 1)
@@ -187,6 +220,7 @@ class AgentRepository:
 
     @staticmethod
     def _parse_conditions(value) -> list[str]:
+        """Normalize chronic condition form input into a clean list."""
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
         if isinstance(value, str):
@@ -195,6 +229,7 @@ class AgentRepository:
 
     @staticmethod
     def _parse_bool(value) -> bool:
+        """Accept checkbox-style values from both JSON and HTML forms."""
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -203,6 +238,7 @@ class AgentRepository:
 
 
 def derive_operational_status(agent: dict) -> str:
+    """Classify a pilgrim into the status color shown on the dashboard."""
     state = agent.get("state", {})
     stress = float(state.get("stress", 0))
     fatigue = float(state.get("fatigue", 0))
@@ -217,12 +253,14 @@ def derive_operational_status(agent: dict) -> str:
     return "stable"
 
 
+# Global simulation session state used by the HTTP handler.
 REPOSITORY = AgentRepository(DATA_FILE)
 ENVIRONMENT = EnvironmentState()
 SUMMARY_HISTORY: list[dict] = []
 
 
 def build_summary_snapshot() -> dict:
+    """Aggregate all agents into the top-level operational dashboard metrics."""
     agents = REPOSITORY.list_agents()
     total = len(agents)
     stable = 0
@@ -279,6 +317,7 @@ def build_summary_snapshot() -> dict:
 
 
 def update_summary_history() -> dict:
+    """Store one summary point per ritual tick for the line chart."""
     summary = build_summary_snapshot()
     entry = {**summary}
     if SUMMARY_HISTORY and SUMMARY_HISTORY[-1]["simulation_tick"] == entry["simulation_tick"]:
@@ -289,6 +328,7 @@ def update_summary_history() -> dict:
 
 
 def reset_dashboard_state() -> dict:
+    """Reset both environment and agents to the initial loaded project state."""
     ENVIRONMENT.reset()
     REPOSITORY.reset_all()
     SUMMARY_HISTORY.clear()
@@ -299,16 +339,21 @@ update_summary_history()
 
 
 class HajjSimHandler(SimpleHTTPRequestHandler):
+    """Request handler that serves both static files and JSON API routes."""
+
     def __init__(self, *args, **kwargs):
+        """Serve frontend files from ``web`` instead of the project root."""
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def end_headers(self) -> None:
+        """Disable browser caching so simulation state refreshes immediately."""
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         super().end_headers()
 
     def do_GET(self) -> None:
+        """Handle dashboard reads: agents, summary, environment, or HTML files."""
         parsed = urlparse(self.path)
         if parsed.path == "/api/agents":
             self._send_json({"agents": REPOSITORY.list_agents()})
@@ -324,18 +369,21 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:
+        """Handle dashboard writes: create agents, step simulation, or reset."""
         parsed = urlparse(self.path)
         content_length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(content_length).decode("utf-8") if content_length else ""
         payload = self._parse_body(raw_body)
 
         if parsed.path == "/api/agents":
+            # Add one manually configured pilgrim to the current roster.
             snapshot = REPOSITORY.create_manual_agent(payload)
             update_summary_history()
             self._send_json({"agent": snapshot}, status=HTTPStatus.CREATED)
             return
 
         if parsed.path == "/api/agents/random":
+            # Add a bounded batch of generated pilgrims to avoid huge UI payloads.
             count = max(1, min(500, int(payload.get("count", 10))))
             agents = REPOSITORY.generate_random_agents(count)
             update_summary_history()
@@ -343,11 +391,13 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/environment":
+            # Update sliders/dropdowns without advancing the ritual tick.
             ENVIRONMENT.apply_updates(payload)
             self._send_json({"environment": ENVIRONMENT.to_dict()})
             return
 
         if parsed.path == "/api/simulate/step":
+            # Run one perceive-decide-act cycle for every active pilgrim.
             ENVIRONMENT.apply_updates(payload)
             actions = REPOSITORY.step_all(ENVIRONMENT.to_payload())
             ENVIRONMENT.tick += 1
@@ -363,6 +413,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/simulate/reset":
+            # Restart the ritual timeline but keep manually/generated agents.
             ENVIRONMENT.reset()
             REPOSITORY.reset_ritual_days()
             summary = update_summary_history()
@@ -376,6 +427,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/dashboard/reset":
+            # Return the entire dashboard to the original file-backed state.
             summary = reset_dashboard_state()
             self._send_json(
                 {
@@ -390,6 +442,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
 
     def _parse_body(self, raw_body: str) -> dict:
+        """Read JSON or URL-encoded form bodies into a normal dictionary."""
         content_type = self.headers.get("Content-Type", "")
         if "application/json" in content_type:
             return json.loads(raw_body or "{}")
@@ -399,6 +452,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
         return {}
 
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+        """Serialize a Python dictionary as an HTTP JSON response."""
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -408,6 +462,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Start the threaded local web server used during demos/development."""
     server = ThreadingHTTPServer((host, port), HajjSimHandler)
     print(f"HajjSim web app running at http://{host}:{port}")
     server.serve_forever()
