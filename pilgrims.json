@@ -9,6 +9,7 @@
     "chronic_conditions": ["diabetes"],
     "language": "Bahasa Indonesia",
     "risk_tolerance": 0.25,
+    "hamlah_id": "H_002",
     "initial_node": "Jeddah_Airport",
     "target_node": "Tawaf_Area",
     "social_memory": {
@@ -38,6 +39,7 @@
     "chronic_conditions": [],
     "language": "Arabic",
     "risk_tolerance": 0.7,
+    "hamlah_id": "H_001",
     "initial_node": "Jeddah_Airport",
     "target_node": "Tawaf_Area",
     "social_memory": {
@@ -67,6 +69,7 @@
     "chronic_conditions": [],
     "language": "English",
     "risk_tolerance": 0.45,
+    "hamlah_id": "H_007",
     "initial_node": "Jeddah_Airport",
     "target_node": "Tawaf_Area",
     "social_memory": {

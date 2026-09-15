@@ -1,0 +1,12 @@
+[
+  {"hotel_id": "HTL_001", "name": "Al-Rajhi Base Camp Hotel", "node_id": "Mina_Camp_1", "capacity": 550},
+  {"hotel_id": "HTL_002", "name": "Al-Noor Base Camp Hotel", "node_id": "Mina_Camp_2", "capacity": 500},
+  {"hotel_id": "HTL_003", "name": "Al-Barakah Base Camp Hotel", "node_id": "Mina_Camp_4", "capacity": 570},
+  {"hotel_id": "HTL_004", "name": "Deccan Base Camp Hotel", "node_id": "Mina_Camps_Core", "capacity": 530},
+  {"hotel_id": "HTL_005", "name": "Dhaka Base Camp Hotel", "node_id": "Mina_West_Gate", "capacity": 450},
+  {"hotel_id": "HTL_006", "name": "Nile Base Camp Hotel", "node_id": "Mina_East_Gate", "capacity": 430},
+  {"hotel_id": "HTL_007", "name": "Baraka Base Camp Hotel", "node_id": "Aziziyah_Zone", "capacity": 650},
+  {"hotel_id": "HTL_008", "name": "Anadolu Base Camp Hotel", "node_id": "Makkah_Arrival_Hub", "capacity": 380},
+  {"hotel_id": "HTL_009", "name": "Tabung Haji Base Camp Hotel", "node_id": "Makkah_Bus_Station", "capacity": 400},
+  {"hotel_id": "HTL_010", "name": "Rihlat Al-Iman Base Camp Hotel", "node_id": "Masjid_al_Haram_Perimeter", "capacity": 420}
+]

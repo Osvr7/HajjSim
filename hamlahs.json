@@ -1,0 +1,82 @@
+[
+  {
+    "hamlah_id": "H_001",
+    "name": "Al-Rajhi National Hajj Mission",
+    "manager_name": "Faisal Al-Rajhi",
+    "declared_pilgrim_count": 500,
+    "nationality": "Saudi Arabia",
+    "base_camp_hotel_id": "HTL_001"
+  },
+  {
+    "hamlah_id": "H_002",
+    "name": "Al-Noor Hajj Group",
+    "manager_name": "Ahmed Al-Fahad",
+    "declared_pilgrim_count": 450,
+    "nationality": "Indonesian",
+    "base_camp_hotel_id": "HTL_002"
+  },
+  {
+    "hamlah_id": "H_003",
+    "name": "Al-Barakah Pakistan Hajj Services",
+    "manager_name": "Imran Qureshi",
+    "declared_pilgrim_count": 520,
+    "nationality": "Pakistani",
+    "base_camp_hotel_id": "HTL_003"
+  },
+  {
+    "hamlah_id": "H_004",
+    "name": "Deccan Hajj Committee",
+    "manager_name": "Rashid Khan",
+    "declared_pilgrim_count": 480,
+    "nationality": "Indian",
+    "base_camp_hotel_id": "HTL_004"
+  },
+  {
+    "hamlah_id": "H_005",
+    "name": "Dhaka Hajj Mission",
+    "manager_name": "Abdul Karim",
+    "declared_pilgrim_count": 410,
+    "nationality": "Bangladeshi",
+    "base_camp_hotel_id": "HTL_005"
+  },
+  {
+    "hamlah_id": "H_006",
+    "name": "Nile Hajj & Umrah Company",
+    "manager_name": "Mostafa El-Sayed",
+    "declared_pilgrim_count": 390,
+    "nationality": "Egyptian",
+    "base_camp_hotel_id": "HTL_006"
+  },
+  {
+    "hamlah_id": "H_007",
+    "name": "Baraka Pilgrims Company",
+    "manager_name": "Fatimah Al-Rashid",
+    "declared_pilgrim_count": 600,
+    "nationality": "Nigerian",
+    "base_camp_hotel_id": "HTL_007"
+  },
+  {
+    "hamlah_id": "H_008",
+    "name": "Anadolu Hac Organizasyonu",
+    "manager_name": "Mehmet Yilmaz",
+    "declared_pilgrim_count": 340,
+    "nationality": "Turkish",
+    "base_camp_hotel_id": "HTL_008"
+  },
+  {
+    "hamlah_id": "H_009",
+    "name": "Tabung Haji Malaysia Group",
+    "manager_name": "Ahmad Zulkifli",
+    "declared_pilgrim_count": 360,
+    "nationality": "Malaysian",
+    "base_camp_hotel_id": "HTL_009"
+  },
+  {
+    "hamlah_id": "H_010",
+    "name": "Rihlat Al-Iman Tours",
+    "manager_name": "Yusuf Al-Mansour",
+    "declared_pilgrim_count": 380,
+    "nationality": "Moroccan",
+    "base_camp_hotel_id": "HTL_010"
+  }
+]

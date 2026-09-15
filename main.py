@@ -6,10 +6,12 @@ synthetic agents, and advancing the ritual simulation without a browser.
 """
 
 import json
+from pathlib import Path
 
 # The CLI reuses the same agent model as the web app so both entry points
 # simulate identical pilgrim behavior.
 from hajj_agents import AgentFactory, PilgrimAgent, StaticProfile, get_simulation_tick_payload
+from hajj_units import HamlahRegistry
 
 
 def build_profile(item):
@@ -26,6 +28,7 @@ def build_profile(item):
         chronic_conditions=tuple(item.get("chronic_conditions", [])),
         language=item.get("language", "Arabic"),
         risk_tolerance=item.get("risk_tolerance", 0.5),
+        hamlah_id=item.get("hamlah_id"),
     )
 
 
@@ -128,6 +131,10 @@ def main():
     agents = load_agents_from_file("pilgrims.json")
     print(f"Successfully loaded {len(agents)} agents.\n")
     factory = AgentFactory(seed=42)
+    # Every pilgrim needs a Hamlah matching its own nationality; this mapping
+    # lets generate_agents() derive the right one automatically.
+    hamlah_registry = HamlahRegistry(Path(__file__).resolve().parent / "hamlahs.json")
+    nationality_to_hamlah = hamlah_registry.nationality_to_hamlah_id()
     simulation_tick = -1
 
     # The loop accepts small commands instead of running a full web server.
@@ -158,6 +165,9 @@ def main():
                 "simulation_day_label": tick_state["simulation_day_label"],
                 "current_ritual": tick_state["current_ritual"],
                 "next_ritual": tick_state["next_ritual"],
+                # The agent time engine now drives ritual windows off simulated
+                # minutes rather than the raw tick index.
+                "simulated_minutes": tick_state["simulated_minutes"],
             }
             for agent in agents.values():
                 agent.step(environment_data)
@@ -172,7 +182,9 @@ def main():
             # Create extra synthetic agents with seeded random demographics.
             parts = user_input.split()
             count = int(parts[1]) if len(parts) > 1 else 10
-            generated_agents = factory.generate_agents(count=count, start_index=len(agents) + 1)
+            generated_agents = factory.generate_agents(
+                count=count, start_index=len(agents) + 1, nationality_to_hamlah=nationality_to_hamlah,
+            )
             agents.update(generated_agents)
             print(f"Generated {count} synthetic pilgrims.\n")
             continue

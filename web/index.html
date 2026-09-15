@@ -47,6 +47,14 @@
             </label>
           </div>
 
+          <!-- Campaign block: every pilgrim belongs to exactly one Hamlah,
+               which fixes its nationality -- selecting a Hamlah below
+               auto-sets Nationality further down, not the other way around. -->
+          <label>
+            Hamlah (Campaign)
+            <select name="hamlah_id" required></select>
+          </label>
+
           <!-- Profile block: age and health determine vulnerability in the agent model. -->
           <div class="grid two">
             <label>
@@ -72,7 +80,7 @@
             <label>
               Nationality
               <select name="nationality" required>
-                <option value="Saudi" selected>Saudi</option>
+                <option value="Saudi Arabia" selected>Saudi Arabia</option>
                 <option value="Indonesian">Indonesian</option>
                 <option value="Pakistani">Pakistani</option>
                 <option value="Indian">Indian</option>
@@ -186,6 +194,25 @@
           <h2>Live GPS Map</h2>
           <p>Real map tiles with Hajj landmarks and zoomable agent positions.</p>
         </div>
+
+        <div class="map-toolbar">
+          <div class="camera-mode-toggle" role="group" aria-label="Camera mode">
+            <button type="button" class="camera-mode-btn is-active" data-mode="free_roam">Free Roam</button>
+            <button type="button" class="camera-mode-btn" data-mode="focus_lock">Focus Lock</button>
+          </div>
+          <button id="recenterMapButton" class="secondary-btn map-toolbar-btn" type="button">Recenter</button>
+          <button id="fullscreenToggleButton" class="secondary-btn map-toolbar-btn" type="button">Fullscreen</button>
+          <div class="deploy-toolbar" role="group" aria-label="Deploy emergency units">
+            <span class="deploy-toolbar-label">Deploy:</span>
+            <button id="deployPoliceButton" class="deploy-btn" type="button" data-unit-type="police">Police</button>
+            <button id="deployMarshalButton" class="deploy-btn" type="button" data-unit-type="marshal">Marshal</button>
+            <button id="deployAmbulanceButton" class="deploy-btn" type="button" data-unit-type="ambulance">Ambulance</button>
+          </div>
+        </div>
+        <p id="placementModeBanner" class="placement-banner" hidden>
+          Click the map to place this unit &mdash; press Esc to cancel.
+        </p>
+
         <div class="map-wrap">
           <div id="mapCanvas" class="map-canvas"></div>
           <aside class="map-legend" aria-label="Agent Color Legend">
@@ -195,6 +222,19 @@
             <div class="legend-item"><span class="legend-dot high"></span><span>High Risk</span></div>
             <div class="legend-item"><span class="legend-dot panic"></span><span>Panicking</span></div>
           </aside>
+          <aside class="map-layers-panel" aria-label="Layer visibility">
+            <button class="layers-toggle" type="button" aria-expanded="true">Map Layers <span class="layers-toggle-caret">&#9662;</span></button>
+            <div class="layers-body">
+              <label><input type="checkbox" data-layer="pilgrims" checked> Pilgrims</label>
+              <label><input type="checkbox" data-layer="buses" checked> Buses</label>
+              <label><input type="checkbox" data-layer="marshals" checked> Marshals</label>
+              <label><input type="checkbox" data-layer="police" checked> Police</label>
+              <label><input type="checkbox" data-layer="ambulances" checked> Ambulances</label>
+              <label><input type="checkbox" data-layer="hotels" checked> Hotels</label>
+              <label><input type="checkbox" data-layer="routes" checked> Routes</label>
+              <label><input type="checkbox" data-layer="sites" checked> Sites</label>
+            </div>
+          </aside>
         </div>
 
         <div class="divider"></div>
@@ -202,90 +242,120 @@
         <form id="environmentForm" class="stack">
           <div class="panel-header compact">
             <h2>Environment Controls</h2>
-            <p>Advance the simulation one ritual per tick, starting from arrival in Makkah.</p>
+            <p>Advance the simulation one tick at a time, starting from arrival in Makkah.</p>
           </div>
 
-          <!-- Pressure block: density and heat affect every agent during a tick. -->
-          <div class="grid two">
-            <label>
-              Density (0-10)
-              <input type="number" name="density" min="0" max="10" step="0.1" value="5.0" required>
-            </label>
-            <label>
-              Temperature &deg;C
-              <input type="number" name="temperature" min="20" max="50" step="0.1" value="37.0" required>
-            </label>
+          <div class="accordion-section is-open">
+            <button type="button" class="accordion-header">
+              Crowd Pressure <span class="accordion-caret">&#9662;</span>
+            </button>
+            <div class="accordion-body">
+              <!-- Pressure block: density and heat affect every agent during a tick. -->
+              <div class="grid two">
+                <label>
+                  Density (0-10)
+                  <input type="number" name="density" min="0" max="10" step="0.1" value="5.0" required>
+                </label>
+                <label>
+                  Temperature &deg;C
+                  <input type="number" name="temperature" min="20" max="50" step="0.1" value="37.0" required>
+                </label>
+              </div>
+            </div>
           </div>
 
-          <!-- Scenario block: hazard and group location shape agent perception. -->
-          <div class="grid two">
-            <label>
-              Hazard
-              <select name="hazard">
-                <option value="none" selected>none</option>
-                <option value="heat_stress">heat_stress</option>
-                <option value="crowd_bottleneck">crowd_bottleneck</option>
-                <option value="medical_incident">medical_incident</option>
-                <option value="route_closure">route_closure</option>
-              </select>
-            </label>
-            <label>
-              Group Location
-              <select name="group_location">
-                <option value="Mina_Camp_1">Mina_Camp_1</option>
-                <option value="Mina_Camp_2">Mina_Camp_2</option>
-                <option value="Mina_Camp_4" selected>Mina_Camp_4</option>
-                <option value="Jamarat_Bridge">Jamarat_Bridge</option>
-                <option value="Arafat_Gate">Arafat_Gate</option>
-                <option value="Arafat">Arafat</option>
-                <option value="Muzdalifah">Muzdalifah</option>
-              </select>
-            </label>
+          <div class="accordion-section">
+            <button type="button" class="accordion-header">
+              Scenario &amp; Hazards <span class="accordion-caret">&#9662;</span>
+            </button>
+            <div class="accordion-body">
+              <!-- Scenario block: hazard and group location shape agent perception. -->
+              <div class="grid two">
+                <label>
+                  Hazard
+                  <select name="hazard">
+                    <option value="none" selected>none</option>
+                    <option value="heat_stress">heat_stress</option>
+                    <option value="crowd_bottleneck">crowd_bottleneck</option>
+                    <option value="medical_incident">medical_incident</option>
+                    <option value="route_closure">route_closure</option>
+                  </select>
+                </label>
+                <label>
+                  Group Location
+                  <select name="group_location">
+                    <option value="Mina_Camp_1">Mina_Camp_1</option>
+                    <option value="Mina_Camp_2">Mina_Camp_2</option>
+                    <option value="Mina_Camp_4" selected>Mina_Camp_4</option>
+                    <option value="Jamarat_Bridge">Jamarat_Bridge</option>
+                    <option value="Arafat_Gate">Arafat_Gate</option>
+                    <option value="Arafat">Arafat</option>
+                    <option value="Muzdalifah">Muzdalifah</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
 
-          <!-- Safety block: fallback destinations for crowd avoidance and panic movement. -->
-          <div class="grid two">
-            <label>
-              Alternate Node
-              <select name="alternate_node">
-                <option value="Shade_Corridor" selected>Shade_Corridor</option>
-                <option value="Transit_Corridor">Transit_Corridor</option>
-                <option value="Mina_Camp_2">Mina_Camp_2</option>
-                <option value="Arafat_Gate">Arafat_Gate</option>
-              </select>
-            </label>
-            <label>
-              Panic Node
-              <select name="panic_node">
-                <option value="Emergency_Point" selected>Emergency_Point</option>
-                <option value="Mina_Camp_1">Mina_Camp_1</option>
-                <option value="Jamarat_Bridge">Jamarat_Bridge</option>
-              </select>
-            </label>
+          <div class="accordion-section">
+            <button type="button" class="accordion-header">
+              Safety Routing <span class="accordion-caret">&#9662;</span>
+            </button>
+            <div class="accordion-body">
+              <!-- Safety block: fallback destinations for crowd avoidance and panic movement. -->
+              <div class="grid two">
+                <label>
+                  Alternate Node
+                  <select name="alternate_node">
+                    <option value="Shade_Corridor" selected>Shade_Corridor</option>
+                    <option value="Transit_Corridor">Transit_Corridor</option>
+                    <option value="Mina_Camp_2">Mina_Camp_2</option>
+                    <option value="Arafat_Gate">Arafat_Gate</option>
+                  </select>
+                </label>
+                <label>
+                  Panic Node
+                  <select name="panic_node">
+                    <option value="Emergency_Point" selected>Emergency_Point</option>
+                    <option value="Mina_Camp_1">Mina_Camp_1</option>
+                    <option value="Jamarat_Bridge">Jamarat_Bridge</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
 
-          <!-- Playback block: manual step, automatic movement, speed, and reset controls. -->
-          <div class="playback-controls">
-            <button class="accent-btn" type="submit">Simulate One Ritual</button>
-            <button class="primary-btn" id="startSimulationButton" type="button">Start Movement</button>
-            <button class="secondary-btn" id="pauseSimulationButton" type="button">Pause</button>
-            <label class="toolbar-field compact-field">
-              Speed
-              <select id="playbackSpeedSelect">
-                <option value="1200">Slow</option>
-                <option value="800" selected>Normal</option>
-                <option value="450">Fast</option>
-                <option value="250">Very Fast</option>
-              </select>
-            </label>
-            <button class="secondary-btn" id="resetDaysButton" type="button">Reset to Start</button>
-            <button class="secondary-btn" id="restartDashboardButton" type="button">Restart Dashboard</button>
+          <div class="accordion-section is-open">
+            <button type="button" class="accordion-header">
+              Playback &amp; Timeline <span class="accordion-caret">&#9662;</span>
+            </button>
+            <div class="accordion-body">
+              <!-- Playback block: manual step, automatic movement, speed, and reset controls. -->
+              <p class="environment-tick">Playback: <strong id="playbackStateIndicator" class="playback-state-indicator is-paused">Paused</strong></p>
+              <div class="playback-controls">
+                <button class="accent-btn" type="submit">Simulate One Tick</button>
+                <button class="primary-btn" id="startSimulationButton" type="button">Start Movement</button>
+                <button class="secondary-btn" id="pauseSimulationButton" type="button">Pause</button>
+                <label class="toolbar-field compact-field">
+                  Speed
+                  <select id="playbackSpeedSelect">
+                    <option value="1200">Slow</option>
+                    <option value="800" selected>Normal</option>
+                    <option value="450">Fast</option>
+                    <option value="250">Very Fast</option>
+                  </select>
+                </label>
+                <button class="secondary-btn" id="resetDaysButton" type="button">Reset to Start</button>
+                <button class="secondary-btn" id="restartDashboardButton" type="button">Restart Dashboard</button>
+              </div>
+              <p class="environment-tick">Simulated Time: <strong id="environmentTimeLabel">Day 0 &ndash; 00:00</strong></p>
+              <p class="environment-tick">Current Day: <strong id="environmentDayLabel">Upon Arrival in Jeddah</strong></p>
+              <p class="environment-tick">Current Location: <strong id="environmentLocationLabel">Jeddah Airport</strong></p>
+              <p class="environment-tick">Current Ritual: <strong id="environmentRitualLabel">Not Started</strong></p>
+              <p class="environment-tick">Next Ritual: <strong id="environmentNextRitualLabel">Tawaf Al-Qudoum (Arrival Tawaf)</strong></p>
+              <p class="environment-tick">Simulation Tick: <strong id="environmentTick">0</strong></p>
+            </div>
           </div>
-          <p class="environment-tick">Current Day: <strong id="environmentDayLabel">Upon Arrival in Jeddah</strong></p>
-          <p class="environment-tick">Current Location: <strong id="environmentLocationLabel">Jeddah Airport</strong></p>
-          <p class="environment-tick">Current Ritual: <strong id="environmentRitualLabel">Not Started</strong></p>
-          <p class="environment-tick">Next Ritual: <strong id="environmentNextRitualLabel">Tawaf Al-Qudoum (Arrival Tawaf)</strong></p>
-          <p class="environment-tick">Ritual Tick: <strong id="environmentTick">0</strong></p>
         </form>
       </section>
     </main>
@@ -297,6 +367,29 @@
         <p>Tick-by-tick trend of operational pressure after each simulation step.</p>
       </div>
       <canvas id="analyticsChart" height="120"></canvas>
+    </section>
+
+    <!-- Proactive analytics report: bottlenecks, strengths, and suggestions
+         derived from the full tick history. Generated on demand, and also
+         automatically once the simulation reaches Hajj Complete. -->
+    <section class="panel analytics-panel">
+      <div class="panel-header">
+        <h2>Analytics Report</h2>
+        <p>Peak bottlenecks, smooth-flow strengths, and suggested operational enhancements from this run.</p>
+      </div>
+      <button id="generateReportButton" class="accent-btn" type="button">Generate Analytics Report</button>
+      <div id="analyticsNarrative" class="analytics-narrative" hidden></div>
+      <div class="analytics-charts">
+        <div class="analytics-chart-wrap">
+          <canvas id="analyticsBarChart" height="180"></canvas>
+        </div>
+        <div id="deploymentImpactChartWrap" class="analytics-chart-wrap" hidden>
+          <canvas id="deploymentImpactChart" height="180"></canvas>
+        </div>
+      </div>
+      <div id="analyticsReportBody" class="analytics-report-body">
+        <p class="analytics-empty">Run the simulation, then generate a report to see bottlenecks, strengths, and suggestions.</p>
+      </div>
     </section>
 
     <!-- Agent roster: searchable/filterable cards for individual pilgrim state. -->
@@ -369,6 +462,15 @@
       <div class="detail-grid"></div>
     </article>
   </template>
+
+  <!-- Slide-in detail panel opened when any pilgrim or support-unit marker is clicked. -->
+  <aside id="detailSidebar" class="detail-sidebar" aria-live="polite">
+    <div class="detail-sidebar-header">
+      <h3 id="detailSidebarTitle">Details</h3>
+      <button id="detailSidebarClose" class="detail-sidebar-close" type="button" aria-label="Close details">&times;</button>
+    </div>
+    <div id="detailSidebarBody" class="detail-sidebar-body"></div>
+  </aside>
 
   <!-- External map/chart libraries followed by the dashboard controller script. -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>

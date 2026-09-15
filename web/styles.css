@@ -345,6 +345,156 @@ button:hover {
 }
 
 /* ============================================================
+   Collapsible accordion (environment controls)
+   ------------------------------------------------------------
+   Reuses the light panel/toggle-field look so each control group can be
+   expanded or collapsed without changing any form field names.
+   ============================================================ */
+
+.accordion-section {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(235, 246, 238, 0.78));
+  overflow: hidden;
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: transparent;
+  border-radius: 0;
+  color: var(--ink);
+  font-weight: 700;
+  text-align: left;
+  box-shadow: none;
+}
+
+.accordion-header:hover {
+  transform: none;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.accordion-caret {
+  transition: transform 200ms ease;
+  color: var(--brand-dark);
+}
+
+.accordion-section.is-open .accordion-caret {
+  transform: rotate(180deg);
+}
+
+.accordion-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 260ms ease, padding 260ms ease;
+  padding: 0 14px;
+}
+
+.accordion-section.is-open .accordion-body {
+  max-height: 600px;
+  padding: 0 14px 14px;
+}
+
+/* ============================================================
+   Map toolbar: camera mode, recenter, fullscreen, deploy buttons
+   ------------------------------------------------------------
+   Sits above the map itself so these operator controls stay visible
+   regardless of map zoom/pan state.
+   ============================================================ */
+
+.map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.camera-mode-toggle {
+  display: inline-flex;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.camera-mode-btn {
+  border: 0;
+  border-radius: 0;
+  padding: 9px 16px;
+  font-weight: 700;
+  font-size: 0.86rem;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.camera-mode-btn:hover {
+  transform: none;
+}
+
+.camera-mode-btn.is-active {
+  background: var(--brand);
+  color: white;
+}
+
+.map-toolbar-btn {
+  padding: 9px 16px;
+  font-size: 0.86rem;
+}
+
+.deploy-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.deploy-toolbar-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+  padding-left: 8px;
+}
+
+.deploy-btn {
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  background: linear-gradient(135deg, #a64a2f 0%, #c2653f 100%);
+  color: white;
+  box-shadow: 0 8px 20px rgba(166, 74, 47, 0.22);
+}
+
+.deploy-btn.is-active {
+  outline: 3px solid rgba(166, 74, 47, 0.5);
+  outline-offset: 2px;
+}
+
+.placement-banner {
+  margin: 0 0 10px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgba(166, 74, 47, 0.14);
+  color: #7a3620;
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.playback-state-indicator.is-paused {
+  color: var(--muted);
+}
+
+.playback-state-indicator.is-playing {
+  color: var(--brand-dark);
+}
+
+/* ============================================================
    Map, legend, and agent markers
    ------------------------------------------------------------
    This block sizes the Leaflet map, styles the overlay legend, and draws the
@@ -362,6 +512,21 @@ button:hover {
 .map-wrap {
   /* Positioning context for the legend overlay. */
   position: relative;
+}
+
+.map-wrap:fullscreen {
+  background: var(--bg-white);
+  padding: 16px;
+  display: flex;
+}
+
+.map-wrap:fullscreen .map-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.map-wrap.placement-mode #mapCanvas {
+  cursor: crosshair;
 }
 
 .map-legend {
@@ -404,6 +569,249 @@ button:hover {
 .legend-dot.support { background: #a67231; }
 .legend-dot.high { background: #c2402f; }
 .legend-dot.panic { background: #6d3fd1; }
+
+/* ============================================================
+   Layer filter panel (map overlay)
+   ------------------------------------------------------------
+   Same overlay pattern as .map-legend (dark, translucent, absolute),
+   anchored to the opposite corner so the two never collide.
+   ============================================================ */
+
+.map-layers-panel {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 500;
+  min-width: 168px;
+  background: rgba(28, 76, 55, 0.88);
+  color: #f4fbf6;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+}
+
+.layers-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  background: transparent;
+  border-radius: 0;
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.layers-toggle:hover {
+  transform: none;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.layers-toggle-caret {
+  transition: transform 200ms ease;
+}
+
+.map-layers-panel.is-collapsed .layers-toggle-caret {
+  transform: rotate(-90deg);
+}
+
+.layers-body {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow: hidden;
+  transition: max-height 240ms ease, padding 240ms ease;
+  padding: 0 12px 10px;
+}
+
+.map-layers-panel.is-collapsed .layers-body {
+  max-height: 0;
+  padding: 0 12px;
+}
+
+.layers-body label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.83rem;
+  font-weight: 500;
+  padding: 3px 0;
+}
+
+.layers-body input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+/* ============================================================
+   Support-unit markers (buses, marshals, police, ambulances)
+   ------------------------------------------------------------
+   Plain CSS/divIcon shapes, no external icon assets, following the same
+   wrapper pattern as .pilgrim-icon-wrapper / .pilgrim-marker.
+   ============================================================ */
+
+.unit-icon-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.unit-marker {
+  position: relative;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.unit-marker.bus {
+  width: 26px;
+  height: 18px;
+}
+
+.unit-marker.bus .unit-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 5px;
+  border-radius: 4px;
+  background: #2f6fa8;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.unit-marker.bus .unit-wheel {
+  position: absolute;
+  bottom: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #1c2c46;
+}
+
+.unit-marker.bus .unit-wheel.left { left: 4px; }
+.unit-marker.bus .unit-wheel.right { right: 4px; }
+
+.unit-marker.marshal {
+  width: 18px;
+  height: 22px;
+}
+
+.unit-marker.marshal .unit-pole {
+  position: absolute;
+  left: 7px;
+  top: 0;
+  width: 2px;
+  height: 22px;
+  background: #6b5636;
+}
+
+.unit-marker.marshal .unit-flag {
+  position: absolute;
+  left: 9px;
+  top: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 5px 0 5px 9px;
+  border-color: transparent transparent transparent #c98a1e;
+}
+
+.unit-marker.police {
+  width: 18px;
+  height: 20px;
+}
+
+.unit-marker.police .unit-body {
+  position: absolute;
+  inset: 0;
+  background: #22315c;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  clip-path: polygon(50% 0%, 100% 15%, 100% 55%, 50% 100%, 0% 55%, 0% 15%);
+}
+
+.unit-marker.police.crowd-control .unit-body {
+  background: #c98a1e;
+}
+
+.unit-marker.ambulance {
+  width: 20px;
+  height: 20px;
+}
+
+.unit-marker.ambulance .unit-body {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: #c2402f;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.unit-marker.ambulance .unit-cross-v,
+.unit-marker.ambulance .unit-cross-h {
+  position: absolute;
+  background: #ffffff;
+}
+
+.unit-marker.ambulance .unit-cross-v {
+  left: 50%;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  transform: translateX(-50%);
+}
+
+.unit-marker.ambulance .unit-cross-h {
+  top: 50%;
+  left: 4px;
+  right: 4px;
+  height: 4px;
+  transform: translateY(-50%);
+}
+
+/* ============================================================
+   Hotel markers
+   ------------------------------------------------------------
+   A Hamlah's base camp: a capacity-based container with a live
+   occupancy badge, following the same divIcon wrapper pattern as
+   pilgrim/unit markers.
+   ============================================================ */
+
+.hotel-icon-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.hotel-marker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #6b3fa0;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  transform: translate(-50%, -100%);
+}
+
+.hotel-marker .hotel-icon-glyph {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.hotel-marker.is-full {
+  background: #a6472a;
+}
+
+.hotel-occupancy-badge {
+  font-variant-numeric: tabular-nums;
+}
 
 .pilgrim-icon-wrapper {
   /* Leaflet wrapper for custom HTML pilgrim markers. */
@@ -472,6 +880,98 @@ button:hover {
 #analyticsChart {
   width: 100%;
   height: 300px !important;
+}
+
+/* ============================================================
+   Analytics report panel
+   ------------------------------------------------------------
+   Reuses the summary-section/detail-item visual language so the report
+   reads as part of the same dashboard system, not a bolted-on widget.
+   ============================================================ */
+
+.analytics-panel {
+  margin-bottom: 16px;
+}
+
+.analytics-report-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.analytics-empty {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(239, 248, 242, 0.76));
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.analytics-section-title {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  color: var(--brand-dark);
+}
+
+.analytics-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analytics-list li {
+  border-radius: 13px;
+  padding: 10px 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(234, 245, 238, 0.86));
+  border: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+
+.analytics-list li strong {
+  color: var(--brand-dark);
+}
+
+.analytics-list.bottleneck li {
+  border-color: rgba(181, 58, 47, 0.28);
+  background: linear-gradient(180deg, rgba(255, 244, 242, 0.75), rgba(250, 232, 229, 0.7));
+}
+
+.analytics-list.resilient li {
+  border-color: rgba(46, 125, 90, 0.28);
+  background: linear-gradient(180deg, rgba(240, 250, 244, 0.8), rgba(226, 244, 233, 0.75));
+}
+
+.analytics-list.suggestion li {
+  border-color: rgba(46, 90, 125, 0.24);
+  background: linear-gradient(180deg, rgba(240, 246, 250, 0.8), rgba(226, 238, 244, 0.75));
+}
+
+.analytics-narrative {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(237, 247, 240, 0.85));
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.analytics-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.analytics-chart-wrap {
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.6);
+  padding: 12px;
 }
 
 .agent-grid {
@@ -665,6 +1165,69 @@ button:hover {
 }
 
 /* ============================================================
+   Detail sidebar
+   ------------------------------------------------------------
+   Slide-in panel opened when any pilgrim or support-unit marker is
+   clicked. Fixed to the viewport edge; a CSS transition handles the
+   open/close animation, no extra library needed.
+   ============================================================ */
+
+.detail-sidebar {
+  position: fixed;
+  top: 0;
+  right: -380px;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  height: 100vh;
+  z-index: 1000;
+  background: var(--panel-strong);
+  border-left: 1px solid var(--line);
+  box-shadow: -20px 0 42px rgba(64, 108, 82, 0.18);
+  backdrop-filter: blur(10px) saturate(115%);
+  transition: right 260ms ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-sidebar.is-open {
+  right: 0;
+}
+
+.detail-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-sidebar-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.detail-sidebar-close {
+  padding: 6px 12px;
+  background: rgba(34, 45, 42, 0.1);
+  color: var(--ink);
+  box-shadow: none;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.detail-sidebar-body {
+  padding: 14px 18px 24px;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.detail-sidebar-body .detail-item {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(234, 245, 238, 0.86));
+}
+
+/* ============================================================
    Responsive behavior
    ------------------------------------------------------------
    These media queries collapse the dashboard for tablet and phone screens
@@ -725,6 +1288,17 @@ button:hover {
     bottom: 8px;
     min-width: 150px;
     padding: 8px 10px;
+  }
+
+  .map-layers-panel {
+    right: 8px;
+    top: 8px;
+    min-width: 140px;
+  }
+
+  .detail-sidebar {
+    width: 100%;
+    right: -100%;
   }
 
   #analyticsChart {

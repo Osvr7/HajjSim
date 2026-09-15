@@ -7,7 +7,11 @@
 
 // Geographic coordinates for every simulation node displayed on the Leaflet map.
 const siteGps = {
-  Jeddah_Airport: { lat: 21.6702, lng: 39.1525, label: "Jeddah Airport" },
+  // Global simulation start: the Hajj Terminal at King Abdulaziz International
+  // Airport (KAIA), not a generic Jeddah point. The node id stays
+  // "Jeddah_Airport" for backward compatibility with every other reference in
+  // the codebase; only the displayed coordinates/label changed.
+  Jeddah_Airport: { lat: 21.6796, lng: 39.1565, label: "KAIA Hajj Terminal" },
   Pilgrim_Country_Airport: { lat: 24.7136, lng: 46.6753, label: "Pilgrim Country Airport" },
   Makkah_Arrival_Hub: { lat: 21.4858, lng: 39.1925, label: "Makkah Arrival Hub" },
   Kaaba: { lat: 21.4225, lng: 39.8262, label: "Al Kaabah" },
@@ -149,60 +153,28 @@ const STATUS_COLORS = {
   panicking: "#6d3fd1"
 };
 
-// Country list used to make manual agent creation more realistic.
-const allCountries = [
-  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia",
-  "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium",
-  "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria",
-  "Burkina Faso", "Burundi", "Cabo Verde", "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad",
-  "Chile", "China", "Colombia", "Comoros", "Congo", "Costa Rica", "Cote d'Ivoire", "Croatia", "Cuba", "Cyprus",
-  "Czech Republic", "Democratic Republic of the Congo", "Denmark", "Djibouti", "Dominica", "Dominican Republic",
-  "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji",
-  "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala",
-  "Guinea", "Guinea-Bissau", "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran",
-  "Iraq", "Ireland", "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati",
-  "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein",
-  "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands",
-  "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco",
-  "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger",
-  "Nigeria", "North Korea", "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine", "Panama",
-  "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Romania", "Russia",
-  "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa", "San Marino",
-  "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore",
-  "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain",
-  "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Tajikistan", "Tanzania", "Thailand",
-  "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda",
-  "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu",
-  "Vatican City", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe", "Kosovo"
+// Every pilgrim belongs to exactly one Hamlah, and each Hamlah has a fixed
+// nationality -- these ten values mirror AgentFactory.DEFAULT_NATIONALITIES
+// (hajj_agents.py) and hamlahs.json exactly, so every nationality choice here
+// always resolves to a real, matching Hamlah. Nationality drives the Hamlah
+// selection (see syncHamlahWithNationality), never the reverse.
+const HAMLAH_NATIONALITIES = [
+  "Saudi Arabia", "Indonesian", "Pakistani", "Indian", "Bangladeshi",
+  "Egyptian", "Nigerian", "Turkish", "Malaysian", "Moroccan"
 ];
 
-// Auto-select the most likely language after choosing a nationality.
-const countryLanguageMap = {
+// Auto-select the matching default language after choosing a nationality.
+const nationalityLanguageMap = {
   "Saudi Arabia": "Arabic",
-  "Egypt": "Arabic",
-  "Morocco": "Arabic",
-  "Algeria": "Arabic",
-  "Tunisia": "Arabic",
-  "Jordan": "Arabic",
-  "Iraq": "Arabic",
-  "Syria": "Arabic",
-  "Lebanon": "Arabic",
-  "Yemen": "Arabic",
-  "Palestine": "Arabic",
-  "United Arab Emirates": "Arabic",
-  "Qatar": "Arabic",
-  "Kuwait": "Arabic",
-  "Oman": "Arabic",
-  "Bahrain": "Arabic",
-  "Pakistan": "Urdu",
-  "India": "Hindi",
-  "Bangladesh": "Bengali",
-  "Indonesia": "Bahasa Indonesia",
-  "Turkey": "Turkish",
-  "Malaysia": "Malay",
-  "Nigeria": "English",
-  "United States": "English",
-  "United Kingdom": "English"
+  "Indonesian": "Bahasa Indonesia",
+  "Pakistani": "Urdu",
+  "Indian": "Hindi",
+  "Bangladeshi": "Bengali",
+  "Egyptian": "Arabic",
+  "Nigerian": "English",
+  "Turkish": "Turkish",
+  "Malaysian": "Malay",
+  "Moroccan": "Arabic"
 };
 
 // ============================================================
@@ -230,6 +202,7 @@ const manualForm = document.querySelector("#manualForm");
 const randomForm = document.querySelector("#randomForm");
 const environmentForm = document.querySelector("#environmentForm");
 const environmentTick = document.querySelector("#environmentTick");
+const environmentTimeLabel = document.querySelector("#environmentTimeLabel");
 const environmentDayLabel = document.querySelector("#environmentDayLabel");
 const environmentLocationLabel = document.querySelector("#environmentLocationLabel");
 const environmentRitualLabel = document.querySelector("#environmentRitualLabel");
@@ -240,22 +213,66 @@ const playbackSpeedSelect = document.querySelector("#playbackSpeedSelect");
 const resetDaysButton = document.querySelector("#resetDaysButton");
 const restartDashboardButton = document.querySelector("#restartDashboardButton");
 const analyticsChartCanvas = document.querySelector("#analyticsChart");
+const generateReportButton = document.querySelector("#generateReportButton");
+const analyticsReportBody = document.querySelector("#analyticsReportBody");
+const analyticsNarrativeEl = document.querySelector("#analyticsNarrative");
+const analyticsBarChartCanvas = document.querySelector("#analyticsBarChart");
+const deploymentImpactChartCanvas = document.querySelector("#deploymentImpactChart");
+const deploymentImpactChartWrap = document.querySelector("#deploymentImpactChartWrap");
+const cameraModeButtons = document.querySelectorAll(".camera-mode-btn");
+const recenterMapButton = document.querySelector("#recenterMapButton");
+const fullscreenToggleButton = document.querySelector("#fullscreenToggleButton");
+const deployButtons = document.querySelectorAll(".deploy-btn");
+const placementModeBanner = document.querySelector("#placementModeBanner");
+const playbackStateIndicator = document.querySelector("#playbackStateIndicator");
+const mapWrapEl = document.querySelector(".map-wrap");
 
 // Frontend runtime state mirrored from the backend API.
 let agents = [];
+let units = [];
 let map;
 let siteLayerGroup;
 let mapLayerGroup;
 let routeLayerGroup;
+let busLayerGroup;
+let marshalLayerGroup;
+let policeLayerGroup;
+let ambulanceLayerGroup;
 let heatLayer;
 let analyticsChart;
 let agentMarkers = new Map();
+let unitMarkers = new Map();
 let currentEnvironment = null;
 let summaryHistory = [];
 let mapHasInitialFit = false;
 let playbackTimer = null;
 let simulationBusy = false;
 let routeLayersReady = false;
+let autoReportShownForRun = false;
+let hotels = [];
+let hamlahs = [];
+let hotelLayerGroup;
+let hotelMarkers = new Map();
+
+// Camera control: Free Roam leaves the map exactly where the user left it;
+// Focus Lock smoothly follows whichever pilgrim/unit was last clicked.
+let cameraMode = "free_roam";
+let focusedEntity = null; // { type: "pilgrim" | "unit", id: string } | null
+
+// Click-to-place unit deployment: set while a "Deploy X" button is active,
+// cleared on placement, cancel (Esc), or after a successful deploy.
+let placementMode = null; // { unitType: string } | null
+
+let analyticsBarChart;
+let deploymentImpactChart;
+
+// Layer-visibility toggles, keyed by the data-layer values in index.html.
+const UNIT_LAYER_GROUPS = {
+  buses: () => busLayerGroup,
+  marshals: () => marshalLayerGroup,
+  police: () => policeLayerGroup,
+  ambulances: () => ambulanceLayerGroup,
+};
 
 // Current roster filter/sort settings used by both cards and map markers.
 const rosterFilters = {
@@ -316,12 +333,11 @@ function populateNationalityOptions() {
   }
 
   nationalitySelect.innerHTML = "";
-  const sortedCountries = [...allCountries].sort((a, b) => a.localeCompare(b));
 
-  sortedCountries.forEach((country) => {
+  HAMLAH_NATIONALITIES.forEach((nationality) => {
     const option = document.createElement("option");
-    option.value = country;
-    option.textContent = country;
+    option.value = nationality;
+    option.textContent = nationality;
     nationalitySelect.appendChild(option);
   });
 
@@ -337,13 +353,52 @@ function syncLanguageWithNationality() {
   }
 
   nationalitySelect.addEventListener("change", () => {
-    const language = countryLanguageMap[nationalitySelect.value] || "English";
+    const language = nationalityLanguageMap[nationalitySelect.value] || "English";
     if ([...languageSelect.options].some((item) => item.value === language)) {
       languageSelect.value = language;
     } else {
       languageSelect.value = "English";
     }
+    syncHamlahWithNationality();
   });
+}
+
+// Populate the Hamlah dropdown from the backend and keep it synced with
+// whichever nationality is currently selected -- a Hamlah's nationality is
+// fixed, so nationality drives the Hamlah choice, never the reverse.
+let hamlahByNationality = new Map();
+
+function populateHamlahOptions() {
+  const hamlahSelect = manualForm.elements.hamlah_id;
+  if (!hamlahSelect) {
+    return;
+  }
+
+  hamlahByNationality = new Map(hamlahs.map((hamlah) => [hamlah.nationality, hamlah]));
+
+  hamlahSelect.innerHTML = "";
+  hamlahs.forEach((hamlah) => {
+    const option = document.createElement("option");
+    option.value = hamlah.hamlah_id;
+    option.textContent = `${hamlah.name} (${hamlah.nationality})`;
+    hamlahSelect.appendChild(option);
+  });
+
+  syncHamlahWithNationality();
+}
+
+// Select the one Hamlah whose nationality matches the form's current choice.
+function syncHamlahWithNationality() {
+  const nationalitySelect = manualForm.elements.nationality;
+  const hamlahSelect = manualForm.elements.hamlah_id;
+  if (!nationalitySelect || !hamlahSelect) {
+    return;
+  }
+
+  const matchingHamlah = hamlahByNationality.get(nationalitySelect.value);
+  if (matchingHamlah) {
+    hamlahSelect.value = matchingHamlah.hamlah_id;
+  }
 }
 
 // Replace a select element's options with a supplied list of simulation nodes.
@@ -423,6 +478,129 @@ function buildPilgrimIcon(status) {
   });
 }
 
+// Build the wide rounded-rectangle Leaflet marker used for bus units.
+function buildBusIcon() {
+  return L.divIcon({
+    className: "unit-icon-wrapper",
+    iconSize: [26, 18],
+    iconAnchor: [13, 14],
+    popupAnchor: [0, -12],
+    html:
+      `<div class="unit-marker bus">` +
+      `<span class="unit-body"></span>` +
+      `<span class="unit-wheel left"></span><span class="unit-wheel right"></span>` +
+      `</div>`
+  });
+}
+
+// Build the pennant-shaped Leaflet marker used for marshal units.
+function buildMarshalIcon() {
+  return L.divIcon({
+    className: "unit-icon-wrapper",
+    iconSize: [18, 22],
+    iconAnchor: [8, 22],
+    popupAnchor: [0, -18],
+    html:
+      `<div class="unit-marker marshal">` +
+      `<span class="unit-pole"></span><span class="unit-flag"></span>` +
+      `</div>`
+  });
+}
+
+// Build the shield-shaped Leaflet marker used for police units.
+function buildPoliceIcon(crowdControlMode) {
+  const modifier = crowdControlMode ? " crowd-control" : "";
+  return L.divIcon({
+    className: "unit-icon-wrapper",
+    iconSize: [18, 20],
+    iconAnchor: [9, 18],
+    popupAnchor: [0, -16],
+    html: `<div class="unit-marker police${modifier}"><span class="unit-body"></span></div>`
+  });
+}
+
+// Build the square marker with a cross used for ambulance units.
+function buildAmbulanceIcon() {
+  return L.divIcon({
+    className: "unit-icon-wrapper",
+    iconSize: [20, 20],
+    iconAnchor: [10, 18],
+    popupAnchor: [0, -16],
+    html:
+      `<div class="unit-marker ambulance">` +
+      `<span class="unit-body"></span><span class="unit-cross-v"></span><span class="unit-cross-h"></span>` +
+      `</div>`
+  });
+}
+
+// Build the badge-style Leaflet marker used for a Hamlah's base-camp hotel.
+function buildHotelIcon(hotel) {
+  const isFull = hotel.occupancy >= hotel.capacity && hotel.capacity > 0;
+  return L.divIcon({
+    className: "hotel-icon-wrapper",
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+    popupAnchor: [0, -26],
+    html:
+      `<div class="hotel-marker${isFull ? " is-full" : ""}">` +
+      `<span class="hotel-icon-glyph">&#127976;</span>` +
+      `<span class="hotel-occupancy-badge">${hotel.occupancy}/${hotel.capacity}</span>` +
+      `</div>`
+  });
+}
+
+// Create, update, and remove Leaflet markers for every Hamlah base-camp hotel.
+function renderHotelMarkers(currentHotels) {
+  if (!hotelLayerGroup) {
+    return;
+  }
+
+  const visibleIds = new Set(currentHotels.map((hotel) => hotel.hotel_id));
+  hotelMarkers.forEach((marker, hotelId) => {
+    if (!visibleIds.has(hotelId)) {
+      hotelLayerGroup.removeLayer(marker);
+      hotelMarkers.delete(hotelId);
+    }
+  });
+
+  currentHotels.forEach((hotel) => {
+    const site = siteGps[hotel.node_id];
+    if (!site) {
+      return;
+    }
+    const latLng = L.latLng(site.lat, site.lng);
+    const icon = buildHotelIcon(hotel);
+    const tooltipHtml =
+      `<strong>${hotel.name}</strong><br>&#127976; Occupancy: ${hotel.occupancy}/${hotel.capacity}`;
+
+    let marker = hotelMarkers.get(hotel.hotel_id);
+    if (!marker) {
+      marker = L.marker(latLng, { icon, title: hotel.name });
+      marker.bindTooltip(tooltipHtml, {
+        direction: "top",
+        offset: [0, -14],
+        opacity: 0.95,
+        sticky: true,
+        className: "agent-hover-tooltip"
+      });
+      marker.on("mouseover", () => marker.openTooltip());
+      marker.on("click", () => {
+        const freshHotel = hotels.find((item) => item.hotel_id === hotel.hotel_id);
+        if (freshHotel) {
+          openHotelDetailSidebar(freshHotel);
+        }
+      });
+      marker.addTo(hotelLayerGroup);
+      hotelMarkers.set(hotel.hotel_id, marker);
+      return;
+    }
+
+    marker.setIcon(icon);
+    marker.setTooltipContent(tooltipHtml);
+    marker.setLatLng(latLng);
+  });
+}
+
 // Read the playback interval selected by the user.
 function getPlaybackDelay() {
   return Number(playbackSpeedSelect?.value || 800);
@@ -435,6 +613,11 @@ function setPlaybackState(isPlaying) {
   }
   if (pauseSimulationButton) {
     pauseSimulationButton.disabled = !isPlaying;
+  }
+  if (playbackStateIndicator) {
+    playbackStateIndicator.textContent = isPlaying ? "Playing" : "Paused";
+    playbackStateIndicator.classList.toggle("is-playing", isPlaying);
+    playbackStateIndicator.classList.toggle("is-paused", !isPlaying);
   }
 }
 
@@ -528,8 +711,42 @@ function ensureMap() {
   routeLayerGroup = L.layerGroup().addTo(map);
   siteLayerGroup = L.layerGroup().addTo(map);
   mapLayerGroup = L.layerGroup().addTo(map);
+  busLayerGroup = L.layerGroup().addTo(map);
+  marshalLayerGroup = L.layerGroup().addTo(map);
+  policeLayerGroup = L.layerGroup().addTo(map);
+  ambulanceLayerGroup = L.layerGroup().addTo(map);
+  hotelLayerGroup = L.layerGroup().addTo(map);
   renderRoutes();
   renderSiteMarkers();
+
+  // Heatmap radius/blur are zoom-responsive, so redraw whenever the zoom
+  // level changes instead of waiting for the next simulation tick.
+  map.on("zoomend", () => {
+    renderHeatmap(getPedestrianAgents(agents), currentEnvironment);
+  });
+
+  // While a "Deploy X" button is active, the next map click places that
+  // unit at the nearest known simulation node instead of panning/zooming.
+  map.on("click", (event) => {
+    if (!placementMode) {
+      return;
+    }
+    deployUnitAt(event.latlng);
+  });
+}
+
+// Find the simulation node whose GPS point is closest to a clicked latlng.
+function findNearestNodeId(latlng) {
+  let nearestNodeId = null;
+  let nearestDistance = Infinity;
+  Object.entries(siteGps).forEach(([nodeId, site]) => {
+    const distance = Math.hypot(site.lat - latlng.lat, site.lng - latlng.lng);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestNodeId = nodeId;
+    }
+  });
+  return nearestNodeId;
 }
 
 // Keep the airport and active route visible when agents start far from Makkah.
@@ -569,14 +786,54 @@ function ensureAirportVisible(currentAgents, environment) {
   }
 }
 
+// Boarded/checked-in pilgrims aren't standing at a map node anymore -- they
+// unrender from the map (roster cards keep showing them via travel_state)
+// while a bus or hotel represents their position instead.
+function getPedestrianAgents(currentAgents) {
+  return currentAgents.filter(
+    (agent) => (agent.state.travel_state || "PEDESTRIAN") === "PEDESTRIAN"
+  );
+}
+
 // Redraw the map-dependent layers using the latest agents and environment.
 function renderMap(currentAgents, environment) {
   ensureMap();
-  const visibleAgents = getDisplayedAgents(currentAgents);
+  const visibleAgents = getPedestrianAgents(getDisplayedAgents(currentAgents));
   renderHeatmap(visibleAgents, environment);
   renderAgentMarkers(visibleAgents);
+  renderUnitMarkers(units);
+  renderHotelMarkers(hotels);
 
-  ensureAirportVisible(currentAgents, environment);
+  // Camera stays exactly where the operator left it in Free Roam; automatic
+  // recentering is now only reachable via the manual Recenter button.
+  if (cameraMode === "focus_lock") {
+    applyFocusLock();
+  }
+}
+
+// In Focus Lock, smoothly follow whichever pilgrim/unit was last clicked --
+// including a pilgrim who just boarded a bus, by following the bus instead.
+function applyFocusLock() {
+  if (!map || !focusedEntity) {
+    return;
+  }
+
+  let latLng = null;
+  if (focusedEntity.type === "pilgrim") {
+    const agent = agents.find((item) => item.profile.pilgrim_id === focusedEntity.id);
+    if (agent && agent.state.boarded_unit_id) {
+      latLng = unitMarkers.get(agent.state.boarded_unit_id)?.getLatLng() || null;
+    }
+    if (!latLng) {
+      latLng = agentMarkers.get(focusedEntity.id)?.getLatLng() || null;
+    }
+  } else if (focusedEntity.type === "unit") {
+    latLng = unitMarkers.get(focusedEntity.id)?.getLatLng() || null;
+  }
+
+  if (latLng) {
+    map.panTo(latLng, { animate: true, duration: 0.6 });
+  }
 }
 
 // Draw the major Hajj movement corridors once.
@@ -691,7 +948,15 @@ function renderAgentMarkers(visibleAgents) {
       marker.on("mouseover", () => marker.openTooltip());
       marker.on("click", () => {
         marker.openPopup();
-        scrollToAgent(agent.profile.pilgrim_id);
+        const pilgrimId = agent.profile.pilgrim_id;
+        focusedEntity = { type: "pilgrim", id: pilgrimId };
+        scrollToAgent(pilgrimId);
+        // Look up the current snapshot rather than closing over the agent
+        // object from whenever this marker was first created.
+        const freshAgent = agents.find((item) => item.profile.pilgrim_id === pilgrimId);
+        if (freshAgent) {
+          openPilgrimDetailSidebar(freshAgent);
+        }
       });
       agentMarkers.set(agent.profile.pilgrim_id, marker);
       return;
@@ -700,6 +965,117 @@ function renderAgentMarkers(visibleAgents) {
     marker.setIcon(buildPilgrimIcon(status));
     marker.setTooltipContent(tooltipHtml);
     marker.setPopupContent(popupHtml);
+    animateMarkerTo(marker, latLng);
+  });
+}
+
+// Human-readable labels for support-unit types, shared by tooltips/sidebar.
+const UNIT_TYPE_LABELS = {
+  bus: "Bus",
+  marshal: "Marshal",
+  police: "Police",
+  ambulance: "Ambulance"
+};
+
+const UNIT_ICON_BUILDERS = {
+  bus: () => buildBusIcon(),
+  marshal: () => buildMarshalIcon(),
+  police: (unit) => buildPoliceIcon(unit.crowd_control_mode),
+  ambulance: () => buildAmbulanceIcon()
+};
+
+const UNIT_TYPE_TO_LAYER_KEY = {
+  bus: "buses",
+  marshal: "marshals",
+  police: "police",
+  ambulance: "ambulances"
+};
+
+// Resolve a unit's Leaflet layer group from its unit_type.
+function getUnitLayerGroup(unitType) {
+  const layerKey = UNIT_TYPE_TO_LAYER_KEY[unitType];
+  const getter = layerKey ? UNIT_LAYER_GROUPS[layerKey] : null;
+  return getter ? getter() : null;
+}
+
+// Offset unit markers slightly so several units at the same node stay visible.
+function getUnitMarkerLatLng(unit, index) {
+  const base = siteGps[unit.current_node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
+  return L.latLng(
+    base.lat + jitter(index + 200, 0.0016),
+    base.lng + jitter(index + 233, 0.002)
+  );
+}
+
+// A corridor bus mid-transit occupies a real in-between point instead of
+// snapping between nodes -- interpolate along its from/to nodes by progress.
+function getUnitDisplayLatLng(unit, index) {
+  if (
+    unit.unit_type === "bus" &&
+    unit.status === "in_transit" &&
+    unit.transit_from_node &&
+    unit.transit_to_node
+  ) {
+    const from = siteGps[unit.transit_from_node];
+    const to = siteGps[unit.transit_to_node];
+    if (from && to) {
+      const progress = Math.max(0, Math.min(1, Number(unit.transit_progress || 0)));
+      return L.latLng(
+        from.lat + (to.lat - from.lat) * progress,
+        from.lng + (to.lng - from.lng) * progress
+      );
+    }
+  }
+  return getUnitMarkerLatLng(unit, index);
+}
+
+// Create, update, and remove Leaflet markers for every support unit.
+function renderUnitMarkers(currentUnits) {
+  const visibleIds = new Set(currentUnits.map((unit) => unit.unit_id));
+  unitMarkers.forEach((marker, unitId) => {
+    if (!visibleIds.has(unitId)) {
+      getUnitLayerGroup(marker.unitType)?.removeLayer(marker);
+      unitMarkers.delete(unitId);
+    }
+  });
+
+  currentUnits.forEach((unit, index) => {
+    const latLng = getUnitDisplayLatLng(unit, index);
+    const iconBuilder = UNIT_ICON_BUILDERS[unit.unit_type] || UNIT_ICON_BUILDERS.bus;
+    const icon = iconBuilder(unit);
+    const typeLabel = UNIT_TYPE_LABELS[unit.unit_type] || unit.unit_type;
+    const passengerLine = unit.unit_type === "bus"
+      ? `<br>Passengers: ${unit.manifest_count || 0}/${unit.passenger_capacity}`
+      : "";
+    const tooltipHtml = `<strong>${unit.unit_id}</strong><br>${typeLabel}<br>Status: ${unit.status}${passengerLine}`;
+
+    let marker = unitMarkers.get(unit.unit_id);
+    if (!marker) {
+      const layerGroup = getUnitLayerGroup(unit.unit_type);
+      marker = L.marker(latLng, { icon, title: unit.unit_id });
+      marker.unitType = unit.unit_type;
+      marker.bindTooltip(tooltipHtml, {
+        direction: "top",
+        offset: [0, -8],
+        opacity: 0.95,
+        sticky: true,
+        className: "agent-hover-tooltip"
+      });
+      marker.on("mouseover", () => marker.openTooltip());
+      marker.on("click", () => {
+        focusedEntity = { type: "unit", id: unit.unit_id };
+        const freshUnit = units.find((item) => item.unit_id === unit.unit_id);
+        if (freshUnit) {
+          openUnitDetailSidebar(freshUnit);
+        }
+      });
+      marker.addTo(layerGroup || mapLayerGroup);
+      unitMarkers.set(unit.unit_id, marker);
+      return;
+    }
+
+    marker.setIcon(icon);
+    marker.setTooltipContent(tooltipHtml);
     animateMarkerTo(marker, latLng);
   });
 }
@@ -747,9 +1123,17 @@ function renderHeatmap(currentAgents, environment) {
     return;
   }
 
+  // Tie the heat radius/blur to the current zoom level so density reads
+  // accurately whether the map is zoomed out over all of Makkah or zoomed
+  // into a single camp -- a fixed radius looks either too diffuse or too
+  // blocky depending on scale.
+  const zoom = map.getZoom();
+  const radius = Math.max(14, Math.min(55, zoom * 3.2 - 12));
+  const blur = Math.max(10, radius * 0.75);
+
   heatLayer = L.heatLayer(heatPoints, {
-    radius: 26,
-    blur: 20,
+    radius,
+    blur,
     maxZoom: 15,
     gradient: {
       0.18: "#6baed6",
@@ -908,6 +1292,7 @@ function renderAgents(currentAgents) {
       detailBlock("Next ritual", agent.state.next_ritual || "Tawaf Al-Qudoum (Arrival Tawaf)"),
       detailBlock("Next ritual day", agent.state.next_ritual_day_label || "Upon Arrival in Jeddah"),
       detailBlock("Schedule status", agent.state.ritual_window_open ? "Ready on this tick" : "Waiting for next tick"),
+      detailBlock("Travel status", describeTravelStatus(agent)),
       detailBlock("Current location", siteGps[agent.state.current_node]?.label || agent.state.current_node),
       detailBlock("Ritual location", siteGps[agent.state.target_node]?.label || agent.state.target_node),
       detailBlock("Group", agent.profile.group_id),
@@ -1030,6 +1415,191 @@ function renderChart(history) {
   analyticsChart.update();
 }
 
+// Render (or clear) the bar chart of peak bottleneck nodes vs. pressure ratio.
+function renderBottleneckChart(peakBottlenecks) {
+  if (!analyticsBarChartCanvas) {
+    return;
+  }
+  const labels = peakBottlenecks.map((item) => siteGps[item.node]?.label || item.node.replaceAll("_", " "));
+  const data = peakBottlenecks.map((item) => item.peak_ratio);
+
+  if (!analyticsBarChart) {
+    analyticsBarChart = new Chart(analyticsBarChartCanvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "Peak pressure ratio (x capacity)",
+          data,
+          backgroundColor: "rgba(194, 64, 47, 0.55)",
+          borderColor: "rgba(194, 64, 47, 1)",
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, title: { display: true, text: "Peak Bottlenecks" } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+    return;
+  }
+
+  analyticsBarChart.data.labels = labels;
+  analyticsBarChart.data.datasets[0].data = data;
+  analyticsBarChart.update();
+}
+
+// Render (or hide) the grouped before/after chart for manually deployed units.
+function renderDeploymentImpactChart(deploymentImpact) {
+  if (!deploymentImpactChartCanvas || !deploymentImpactChartWrap) {
+    return;
+  }
+
+  if (!deploymentImpact.length) {
+    deploymentImpactChartWrap.hidden = true;
+    return;
+  }
+  deploymentImpactChartWrap.hidden = false;
+
+  const labels = deploymentImpact.map((item) => `${item.unit_type} @ ${item.node_id.replaceAll("_", " ")}`);
+  const beforeData = deploymentImpact.map((item) => item.ratio_before);
+  const afterData = deploymentImpact.map((item) => item.ratio_after);
+
+  if (!deploymentImpactChart) {
+    deploymentImpactChart = new Chart(deploymentImpactChartCanvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Pressure before",
+            data: beforeData,
+            backgroundColor: "rgba(166, 114, 49, 0.55)",
+            borderColor: "rgba(166, 114, 49, 1)",
+            borderWidth: 1
+          },
+          {
+            label: "Pressure after",
+            data: afterData,
+            backgroundColor: "rgba(32, 106, 78, 0.55)",
+            borderColor: "rgba(32, 106, 78, 1)",
+            borderWidth: 1
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true }, title: { display: true, text: "Manual Deployment Impact" } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+    return;
+  }
+
+  deploymentImpactChart.data.labels = labels;
+  deploymentImpactChart.data.datasets[0].data = beforeData;
+  deploymentImpactChart.data.datasets[1].data = afterData;
+  deploymentImpactChart.update();
+}
+
+// Render the proactive analytics report: bottlenecks, strengths, suggestions.
+function renderAnalyticsReport(report) {
+  if (!analyticsReportBody) {
+    return;
+  }
+
+  if (!report || !report.has_data) {
+    analyticsReportBody.innerHTML =
+      `<p class="analytics-empty">Run the simulation, then generate a report to see bottlenecks, strengths, and suggestions.</p>`;
+    if (analyticsNarrativeEl) {
+      analyticsNarrativeEl.hidden = true;
+      analyticsNarrativeEl.innerHTML = "";
+    }
+    if (deploymentImpactChartWrap) {
+      deploymentImpactChartWrap.hidden = true;
+    }
+    return;
+  }
+
+  if (analyticsNarrativeEl) {
+    analyticsNarrativeEl.hidden = !report.narrative;
+    analyticsNarrativeEl.innerHTML = report.narrative
+      ? report.narrative
+          .split("\n")
+          .filter((paragraph) => paragraph.trim())
+          .map((paragraph) => `<p>${paragraph}</p>`)
+          .join("")
+      : "";
+  }
+  renderBottleneckChart(report.peak_bottlenecks || []);
+  renderDeploymentImpactChart(report.deployment_impact || []);
+
+  const bottleneckItems = report.peak_bottlenecks.length
+    ? report.peak_bottlenecks.map((item) => {
+        const label = (siteGps[item.node]?.label || item.node.replaceAll("_", " "));
+        return `<li><strong>${label}</strong> — peaked at ${item.peak_ratio}x capacity ` +
+          `(${item.overload_ticks} overloaded ticks, around ${item.peak_day_label || `tick ${item.peak_tick}`})</li>`;
+      }).join("")
+    : `<li>No sustained bottlenecks detected.</li>`;
+
+  const resilientItems = report.resilient_windows.length
+    ? report.resilient_windows.map((item) =>
+        `<li><strong>${item.day_label || `Tick ${item.tick}`}</strong> — severity index stayed at ${item.severity_index}%</li>`
+      ).join("")
+    : `<li>No especially low-pressure windows stood out in this run.</li>`;
+
+  const bufferedLabel = report.well_buffered_locations.length
+    ? report.well_buffered_locations.map((node) => siteGps[node]?.label || node.replaceAll("_", " ")).join(", ")
+    : "None recorded";
+
+  const suggestionItems = report.suggested_enhancements.map((text) => `<li>${text}</li>`).join("");
+
+  analyticsReportBody.innerHTML = `
+    <section>
+      <h3 class="analytics-section-title">Peak Bottlenecks (Weaknesses)</h3>
+      <ul class="analytics-list bottleneck">${bottleneckItems}</ul>
+    </section>
+    <section>
+      <h3 class="analytics-section-title">Smooth Flow Metrics (Strengths)</h3>
+      <ul class="analytics-list resilient">${resilientItems}</ul>
+      <p class="environment-tick" style="margin-top: 8px;">Well-buffered locations: <strong>${bufferedLabel}</strong></p>
+    </section>
+    <section>
+      <h3 class="analytics-section-title">Suggested Operational Enhancements</h3>
+      <ul class="analytics-list suggestion">${suggestionItems}</ul>
+    </section>
+  `;
+}
+
+// Fetch the latest analytics report from the backend and render it.
+async function fetchAndRenderAnalyticsReport() {
+  const response = await fetchJson("/api/analytics/report");
+  renderAnalyticsReport(response.report);
+}
+
+generateReportButton?.addEventListener("click", async () => {
+  if (generateReportButton) {
+    generateReportButton.disabled = true;
+    generateReportButton.dataset.originalLabel = generateReportButton.textContent;
+    generateReportButton.textContent = "Generating…";
+  }
+  try {
+    await fetchAndRenderAnalyticsReport();
+  } catch (error) {
+    if (analyticsReportBody) {
+      analyticsReportBody.innerHTML = `<p class="analytics-empty">Could not load the report: ${error.message}</p>`;
+    }
+  } finally {
+    if (generateReportButton) {
+      generateReportButton.disabled = false;
+      generateReportButton.textContent = generateReportButton.dataset.originalLabel || "Generate Analytics Report";
+    }
+  }
+});
+
 // Build a compact stat tile inside an agent card.
 function statBlock(label, value) {
   return `<div class="mini-stat"><span>${label}</span><strong>${value}</strong></div>`;
@@ -1038,6 +1608,131 @@ function statBlock(label, value) {
 // Build a label/value detail tile inside an agent card.
 function detailBlock(label, value) {
   return `<div class="detail-item"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+// Translate an agent's travel_state into a human-readable roster/sidebar line.
+function describeTravelStatus(agent) {
+  const state = agent.state;
+  switch (state.travel_state) {
+    case "IN_TRANSIT":
+      return `Boarded ${state.boarded_unit_id || "a bus"}`;
+    case "AWAITING_TRANSPORT":
+      return "Awaiting transport";
+    case "CHECKED_IN_HOTEL": {
+      const hotel = hotels.find((item) => item.hotel_id === state.checked_in_hotel_id);
+      return `Checked in at ${hotel?.name || state.checked_in_hotel_id || "hotel"}`;
+    }
+    default:
+      return "On foot";
+  }
+}
+
+// ============================================================
+// Detail sidebar
+// ------------------------------------------------------------
+// Slide-in panel shown when any pilgrim or support-unit marker is
+// clicked, using the same detailBlock/statBlock helpers as roster cards.
+// ============================================================
+
+const detailSidebar = document.querySelector("#detailSidebar");
+const detailSidebarTitle = document.querySelector("#detailSidebarTitle");
+const detailSidebarBody = document.querySelector("#detailSidebarBody");
+const detailSidebarClose = document.querySelector("#detailSidebarClose");
+
+function openDetailSidebar(title, bodyHtml) {
+  if (!detailSidebar) {
+    return;
+  }
+  detailSidebarTitle.textContent = title;
+  detailSidebarBody.innerHTML = bodyHtml;
+  detailSidebar.classList.add("is-open");
+}
+
+function closeDetailSidebar() {
+  detailSidebar?.classList.remove("is-open");
+}
+
+detailSidebarClose?.addEventListener("click", closeDetailSidebar);
+
+// Show a pilgrim's full profile/state/memory in the slide-in sidebar.
+function openPilgrimDetailSidebar(agent) {
+  const statusKey = getAgentStatus(agent);
+  const ritualProgress = agent.memory.long_term.ritual_progress || [];
+  const ritualSchedule = agent.memory.long_term.ritual_schedule || [];
+  const completedRitualCount = ritualSchedule.filter((step) => ritualProgress.includes(step.progress_key)).length;
+
+  const bodyHtml = [
+    statBlock("Status", statusKey.replaceAll("_", " ")),
+    detailBlock("Nationality", agent.profile.nationality),
+    detailBlock("Age", agent.profile.age),
+    detailBlock("Group", agent.profile.group_id),
+    detailBlock("Hamlah", agent.profile.hamlah_id || "Unassigned"),
+    detailBlock("Travel status", describeTravelStatus(agent)),
+    detailBlock("Current location", siteGps[agent.state.current_node]?.label || agent.state.current_node),
+    detailBlock("Ritual location", siteGps[agent.state.target_node]?.label || agent.state.target_node),
+    detailBlock("Current ritual", agent.state.current_ritual || "Not Started"),
+    detailBlock("Next ritual", agent.state.next_ritual || "Tawaf Al-Qudoum (Arrival Tawaf)"),
+    detailBlock("Stress", agent.state.stress.toFixed(1)),
+    detailBlock("Fatigue", agent.state.fatigue.toFixed(1)),
+    detailBlock("Hydration", agent.state.hydration.toFixed(1)),
+    detailBlock("With group", agent.state.is_with_group ? "Yes" : "No"),
+    detailBlock("Straggling", agent.state.is_straggling ? "Yes" : "No"),
+    detailBlock("Ritual progress", `${completedRitualCount}/${ritualSchedule.length || 0} complete`),
+    detailBlock("Last action", agent.state.last_action),
+    detailBlock("Memory", (agent.memory.short_term.recent_nodes || []).join(", ") || "Fresh agent")
+  ].join("");
+
+  openDetailSidebar(`${agent.profile.pilgrim_id} — ${agent.profile.nationality} pilgrim`, bodyHtml);
+}
+
+// Show a support unit's status/role-specific fields in the slide-in sidebar.
+function openUnitDetailSidebar(unit) {
+  const typeLabel = UNIT_TYPE_LABELS[unit.unit_type] || unit.unit_type;
+  const rows = [
+    statBlock("Status", unit.status.replaceAll("_", " ")),
+    detailBlock("Current location", siteGps[unit.current_node]?.label || unit.current_node),
+    detailBlock("Target location", siteGps[unit.target_node]?.label || unit.target_node),
+    detailBlock("Last action", unit.last_action)
+  ];
+
+  if (unit.unit_type === "bus") {
+    rows.push(detailBlock("Passenger capacity", unit.passenger_capacity));
+    rows.push(detailBlock(
+      "Route",
+      (unit.assigned_route || []).map((node) => siteGps[node]?.label || node).join(" → ")
+    ));
+  } else if (unit.unit_type === "marshal") {
+    rows.push(detailBlock(
+      "Patrol zone",
+      (unit.patrol_zone || []).map((node) => siteGps[node]?.label || node).join(", ")
+    ));
+    rows.push(detailBlock("Agents assisted", unit.agents_assisted_count));
+  } else if (unit.unit_type === "police") {
+    rows.push(detailBlock(
+      "Patrol zone",
+      (unit.patrol_zone || []).map((node) => siteGps[node]?.label || node).join(", ")
+    ));
+    rows.push(detailBlock("Crowd control mode", unit.crowd_control_mode ? "Active" : "Standby"));
+  } else if (unit.unit_type === "ambulance") {
+    rows.push(detailBlock("Home hospital", siteGps[unit.home_hospital_node]?.label || unit.home_hospital_node));
+    rows.push(detailBlock("Responding to", unit.responding_to_pilgrim_id || "None"));
+  }
+
+  openDetailSidebar(`${unit.unit_id} — ${typeLabel}`, rows.join(""));
+}
+
+// Show a hotel's occupancy and roster of currently checked-in pilgrims.
+function openHotelDetailSidebar(hotel) {
+  const occupantLabels = (hotel.occupant_ids || [])
+    .map((pilgrimId) => agents.find((agent) => agent.profile.pilgrim_id === pilgrimId)?.profile.pilgrim_id || pilgrimId);
+
+  const bodyHtml = [
+    statBlock("Occupancy", `${hotel.occupancy}/${hotel.capacity}`),
+    detailBlock("Location", siteGps[hotel.node_id]?.label || hotel.node_id),
+    detailBlock("Checked-in pilgrims", occupantLabels.join(", ") || "None currently checked in")
+  ].join("");
+
+  openDetailSidebar(`${hotel.name} — Hotel`, bodyHtml);
 }
 
 // Scroll to one agent card and briefly highlight it.
@@ -1110,6 +1805,7 @@ function resetManualDefaults() {
   manualForm.health_status.value = "stable";
   manualForm.nationality.value = "Saudi Arabia";
   manualForm.language.value = "Arabic";
+  syncHamlahWithNationality();
   manualForm.mobility.value = "0.90";
   manualForm.risk_tolerance.value = "0.5";
   manualForm.initial_node.value = "Jeddah_Airport";
@@ -1198,11 +1894,15 @@ function applyEnvironmentForm(environment) {
   if (environmentNextRitualLabel) {
     environmentNextRitualLabel.textContent = environment.next_ritual || "Tawaf Al-Qudoum (Arrival Tawaf)";
   }
+  if (environmentTimeLabel && environment.simulated_time_label) {
+    environmentTimeLabel.textContent = environment.simulated_time_label;
+  }
 }
 
 // Move the map view to one agent's marker or current node.
 function focusAgentOnMap(agentId) {
   ensureMap();
+  focusedEntity = { type: "pilgrim", id: agentId };
 
   const marker = agentMarkers.get(agentId);
   if (marker) {
@@ -1237,15 +1937,26 @@ function focusAgentOnMap(agentId) {
 // Fetch agents, summary, and environment together, then rerender the dashboard.
 async function refreshAll() {
   // Fetch independent resources in parallel so the dashboard refresh stays fast.
-  const [agentResponse, summaryResponse, environmentResponse] = await Promise.all([
-    fetchJson("/api/agents"),
-    fetchJson("/api/summary"),
-    fetchJson("/api/environment")
-  ]);
+  const [agentResponse, summaryResponse, environmentResponse, unitResponse, hamlahResponse, hotelResponse] =
+    await Promise.all([
+      fetchJson("/api/agents"),
+      fetchJson("/api/summary"),
+      fetchJson("/api/environment"),
+      fetchJson("/api/units"),
+      fetchJson("/api/hamlahs"),
+      fetchJson("/api/hotels")
+    ]);
 
   agents = agentResponse.agents;
+  units = unitResponse.units || [];
   summaryHistory = summaryResponse.history || [];
   currentEnvironment = environmentResponse.environment;
+  const hamlahsChanged = hamlahs.length !== (hamlahResponse.hamlahs || []).length;
+  hamlahs = hamlahResponse.hamlahs || [];
+  hotels = hotelResponse.hotels || [];
+  if (hamlahsChanged) {
+    populateHamlahOptions();
+  }
   populateGroupFilterOptions(agents);
   renderSummary(summaryResponse.summary);
   renderMap(agents, currentEnvironment);
@@ -1270,6 +1981,14 @@ async function runSimulationStep() {
       body: JSON.stringify(getEnvironmentPayload())
     });
     await refreshAll();
+
+    // Proactively surface the analytics report the moment the simulation
+    // reaches the end, in addition to the manual "Generate Report" button.
+    if (!autoReportShownForRun && currentEnvironment?.current_ritual === "Hajj Complete") {
+      autoReportShownForRun = true;
+      await fetchAndRenderAnalyticsReport();
+      document.querySelector(".analytics-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   } finally {
     simulationBusy = false;
   }
@@ -1291,6 +2010,70 @@ function startPlayback() {
     });
   }, getPlaybackDelay());
 }
+
+// ============================================================
+// Map layer filter panel and environment-controls accordion
+// ------------------------------------------------------------
+// Both reuse a simple max-height CSS transition for expand/collapse, so no
+// animation library is needed; only visibility toggling requires JS.
+// ============================================================
+
+// Show/hide one Leaflet layer group without destroying its markers.
+function toggleLayerGroup(layerGroup, isVisible) {
+  if (!layerGroup || !map) {
+    return;
+  }
+  const hasLayer = map.hasLayer(layerGroup);
+  if (isVisible && !hasLayer) {
+    map.addLayer(layerGroup);
+  } else if (!isVisible && hasLayer) {
+    map.removeLayer(layerGroup);
+  }
+}
+
+// Map a layer-panel checkbox's data-layer value to the matching layer group.
+function applyLayerVisibility(layerKey, isVisible) {
+  if (layerKey === "pilgrims") {
+    toggleLayerGroup(mapLayerGroup, isVisible);
+    return;
+  }
+  if (layerKey === "routes") {
+    toggleLayerGroup(routeLayerGroup, isVisible);
+    return;
+  }
+  if (layerKey === "sites") {
+    toggleLayerGroup(siteLayerGroup, isVisible);
+    return;
+  }
+  if (layerKey === "hotels") {
+    toggleLayerGroup(hotelLayerGroup, isVisible);
+    return;
+  }
+  const getter = UNIT_LAYER_GROUPS[layerKey];
+  if (getter) {
+    toggleLayerGroup(getter(), isVisible);
+  }
+}
+
+const mapLayersPanel = document.querySelector(".map-layers-panel");
+const layersToggleButton = document.querySelector(".layers-toggle");
+
+layersToggleButton?.addEventListener("click", () => {
+  mapLayersPanel?.classList.toggle("is-collapsed");
+});
+
+document.querySelectorAll(".layers-body input[type='checkbox']").forEach((checkbox) => {
+  checkbox.addEventListener("change", () => {
+    applyLayerVisibility(checkbox.dataset.layer, checkbox.checked);
+  });
+});
+
+// Expand/collapse each environment-controls section independently.
+document.querySelectorAll(".accordion-header").forEach((header) => {
+  header.addEventListener("click", () => {
+    header.parentElement?.classList.toggle("is-open");
+  });
+});
 
 // Wire roster controls to filtering/sorting behavior.
 applyRosterFiltersButton?.addEventListener("click", applyRosterFilters);
@@ -1362,6 +2145,8 @@ resetDaysButton?.addEventListener("click", async () => {
     body: JSON.stringify({})
   });
 
+  autoReportShownForRun = false;
+  renderAnalyticsReport(null);
   await refreshAll();
 });
 
@@ -1374,10 +2159,103 @@ restartDashboardButton?.addEventListener("click", async () => {
     body: JSON.stringify({})
   });
 
+  autoReportShownForRun = false;
+  renderAnalyticsReport(null);
   resetManualDefaults();
   clearRosterFilters();
   await refreshAll();
 });
+
+// ============================================================
+// Camera control, fullscreen, and click-to-place unit deployment
+// ------------------------------------------------------------
+// Free Roam leaves the map exactly where the operator left it; Focus Lock
+// follows the last-clicked pilgrim/unit. Deploy buttons arm "placement
+// mode" so the next map click drops a new unit at the nearest node.
+// ============================================================
+
+// Switch between Free Roam and Focus Lock camera behavior.
+cameraModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    cameraMode = button.dataset.mode;
+    cameraModeButtons.forEach((item) => item.classList.toggle("is-active", item === button));
+    if (cameraMode === "focus_lock") {
+      applyFocusLock();
+    }
+  });
+});
+
+// Manually recenter the map on the active route/agents (round-1 behavior),
+// now opt-in instead of running automatically on every tick.
+recenterMapButton?.addEventListener("click", () => {
+  ensureMap();
+  mapHasInitialFit = false;
+  ensureAirportVisible(agents, currentEnvironment);
+});
+
+// Toggle fullscreen on the map area; Leaflet needs an explicit resize nudge
+// once the browser finishes resizing the element.
+fullscreenToggleButton?.addEventListener("click", () => {
+  if (!mapWrapEl) {
+    return;
+  }
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else {
+    mapWrapEl.requestFullscreen();
+  }
+});
+
+document.addEventListener("fullscreenchange", () => {
+  setTimeout(() => map?.invalidateSize(), 60);
+});
+
+// Enter/exit placement mode for one emergency-unit type.
+function setPlacementMode(unitType) {
+  placementMode = unitType ? { unitType } : null;
+  deployButtons.forEach((button) => {
+    button.classList.toggle("is-active", Boolean(unitType) && button.dataset.unitType === unitType);
+  });
+  if (mapWrapEl) {
+    mapWrapEl.classList.toggle("placement-mode", Boolean(placementMode));
+  }
+  if (placementModeBanner) {
+    placementModeBanner.hidden = !placementMode;
+  }
+}
+
+deployButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const unitType = button.dataset.unitType;
+    setPlacementMode(placementMode?.unitType === unitType ? null : unitType);
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && placementMode) {
+    setPlacementMode(null);
+  }
+});
+
+// Snap a map click to the nearest known node and deploy the armed unit there.
+async function deployUnitAt(latlng) {
+  const unitType = placementMode?.unitType;
+  if (!unitType) {
+    return;
+  }
+  const nodeId = findNearestNodeId(latlng);
+  setPlacementMode(null);
+  if (!nodeId) {
+    return;
+  }
+
+  await fetchJson("/api/units/deploy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ unit_type: unitType, node_id: nodeId })
+  });
+  await refreshAll();
+}
 
 // Initial UI state and first data load.
 setPlaybackState(false);

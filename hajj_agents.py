@@ -17,7 +17,16 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 # This block defines the ordered sequence of Hajj rituals, the
 # high-level day structure, and the metadata used by the UI and
 # simulation to track which ritual is active at each tick.
+#
+# Time model: one simulation tick represents a fixed slice of
+# simulated wall-clock time (not "one ritual stage"). Each ritual
+# step owns an absolute-minute window (from simulation start) during
+# which it is actually active; between windows, agents wait rather
+# than teleport straight to the next stage.
 # ============================================================
+
+SIMULATED_MINUTES_PER_TICK = 60
+MINUTES_PER_SIMULATED_DAY = 24 * 60
 
 
 @dataclass(frozen=True)
@@ -31,6 +40,8 @@ class RitualStep:
     target_node: str
     progress_key: str
     description: str
+    window_start_minute: int
+    window_end_minute: int
 
 
 @dataclass(frozen=True)
@@ -111,6 +122,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Tawaf_Area",
         progress_key="tawaf_qudoum_complete",
         description="Pilgrims begin the Hajj rites with Tawaf Al-Qudoum after arriving for Hajj.",
+        window_start_minute=360,
+        window_end_minute=1320,
     ),
     RitualStep(
         sequence_order=2,
@@ -120,6 +133,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Mina_Camps_Core",
         progress_key="mina_tarwiyah_complete",
         description="Pilgrims move to Mina and spend the Day of Tarwiyah there.",
+        window_start_minute=1800,
+        window_end_minute=2640,
     ),
     RitualStep(
         sequence_order=3,
@@ -129,6 +144,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Arafat_Main_Field",
         progress_key="arafah_complete",
         description="Pilgrims stand at Arafah for prayer, reflection, and supplication.",
+        window_start_minute=3240,
+        window_end_minute=3960,
     ),
     RitualStep(
         sequence_order=4,
@@ -138,6 +155,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Muzdalifah_Open_Area",
         progress_key="muzdalifah_complete",
         description="Pilgrims stay in Muzdalifah and collect pebbles for the next rites.",
+        window_start_minute=5400,
+        window_end_minute=6120,
     ),
     RitualStep(
         sequence_order=5,
@@ -147,6 +166,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Jamarat_Complex",
         progress_key="jamrat_aqaba_complete",
         description="Pilgrims perform the stoning at Jamrat al-Aqaba al-Kubra.",
+        window_start_minute=6120,
+        window_end_minute=6300,
     ),
     RitualStep(
         sequence_order=6,
@@ -156,6 +177,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Sacrifice_Zone",
         progress_key="sacrifice_complete",
         description="Pilgrims perform the sacrifice following the stoning ritual.",
+        window_start_minute=6300,
+        window_end_minute=6900,
     ),
     RitualStep(
         sequence_order=7,
@@ -165,6 +188,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Tawaf_Area",
         progress_key="ifadhah_sai_complete",
         description="Pilgrims return to the Haram for Tawaf Al-Ifadhah and the Sa'y of Hajj.",
+        window_start_minute=6900,
+        window_end_minute=7380,
     ),
     RitualStep(
         sequence_order=8,
@@ -174,6 +199,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Mina_Camps_Core",
         progress_key="first_tashreeq_night_complete",
         description="Pilgrims return to Mina for the first Tashreeq night stay.",
+        window_start_minute=8400,
+        window_end_minute=9000,
     ),
     RitualStep(
         sequence_order=9,
@@ -183,6 +210,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Mina_Camps_Core",
         progress_key="mina_day_11_complete",
         description="Pilgrims remain in Mina on the 11th of Dhul-Hijjah.",
+        window_start_minute=9360,
+        window_end_minute=9960,
     ),
     RitualStep(
         sequence_order=10,
@@ -192,6 +221,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Mina_Camps_Core",
         progress_key="mina_day_12_complete",
         description="Pilgrims remain in Mina on the 12th of Dhul-Hijjah.",
+        window_start_minute=10800,
+        window_end_minute=11400,
     ),
     RitualStep(
         sequence_order=11,
@@ -201,6 +232,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Mina_Camps_Core",
         progress_key="mina_day_13_complete",
         description="Pilgrims remain in Mina on the 13th of Dhul-Hijjah.",
+        window_start_minute=12240,
+        window_end_minute=12840,
     ),
     RitualStep(
         sequence_order=12,
@@ -210,12 +243,52 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Tawaf_Area",
         progress_key="farewell_tawaf_complete",
         description="Pilgrims complete the farewell circumambulation before departure.",
+        window_start_minute=13320,
+        window_end_minute=14280,
     ),
 )
 
 # Optional rituals can be skipped for agents whose profile says they do not
 # perform that rite. They are still tracked so progress remains consistent.
 OPTIONAL_RITUAL_PROGRESS_KEYS = {"sacrifice_complete"}
+
+# Approximate node capacities used by the analytics report to flag bottlenecks
+# (backend source of truth -- deliberately separate from web/app.js's
+# NODE_PRESSURE_BASELINES, which only tunes the heatmap's visual weighting).
+NODE_CAPACITY_BASELINES: Dict[str, int] = {
+    "Kaaba": 10,
+    "Masjid_al_Haram_Perimeter": 16,
+    "Tawaf_Area": 9,
+    "Sai_Corridor": 12,
+    "Aziziyah_Zone": 18,
+    "Makkah_Bus_Station": 14,
+    "Mina_Camp_1": 16,
+    "Mina_Camp_2": 16,
+    "Mina_Camp_4": 14,
+    "Mina_Camps_Core": 22,
+    "Mina_West_Gate": 12,
+    "Mina_East_Gate": 12,
+    "Jamarat_Bridge": 10,
+    "Jamarat_Complex": 13,
+    "Jamarat": 10,
+    "Arafat_Gate": 12,
+    "Arafat_Main_Field": 28,
+    "Arafat": 26,
+    "Muzdalifah_Open_Area": 24,
+    "Muzdalifah": 20,
+    "Cooling_Station_1": 8,
+    "Shade_Corridor": 9,
+    "Shade_Corridor_2": 9,
+    "Transit_Corridor": 10,
+    "Medical_Post_1": 7,
+    "Security_Checkpoint_1": 8,
+    "Emergency_Point_1": 6,
+    "Emergency_Point_2": 6,
+    "Field_Hospital": 8,
+    "Police_Assist_Point": 7,
+    "Emergency_Point": 6,
+}
+DEFAULT_NODE_CAPACITY = 12
 
 
 # ============================================================
@@ -329,6 +402,8 @@ def get_ritual_schedule_payload(include_optional_rituals: bool = True) -> List[d
             "target_node": step.target_node,
             "progress_key": step.progress_key,
             "description": step.description,
+            "window_start_minute": step.window_start_minute,
+            "window_end_minute": step.window_end_minute,
         }
         for step in HAJJ_RITUAL_SCHEDULE
         if include_optional_rituals or step.progress_key not in OPTIONAL_RITUAL_PROGRESS_KEYS
@@ -345,6 +420,8 @@ def ritual_step_from_payload(step_payload: dict) -> RitualStep:
         target_node=step_payload["target_node"],
         progress_key=step_payload["progress_key"],
         description=step_payload["description"],
+        window_start_minute=int(step_payload["window_start_minute"]),
+        window_end_minute=int(step_payload["window_end_minute"]),
     )
 
 
@@ -374,48 +451,127 @@ def get_next_simulation_ritual_step(tick: int) -> Optional[RitualStep]:
     return HAJJ_RITUAL_SCHEDULE[next_index]
 
 
-def get_simulation_tick_payload(tick: int) -> dict:
-    """Build the combined day/ritual metadata used by agents and the UI."""
-    if int(tick) < 0:
-        # Before the first step, the dashboard shows the schedule as not started
-        # while still previewing the first ritual.
-        first_step = HAJJ_RITUAL_SCHEDULE[0]
-        return {
-            "simulation_ritual_index": -1,
-            "simulation_day_index": first_step.scheduled_day_index,
-            "simulation_day_label": first_step.scheduled_day_label,
-            "current_ritual": "Not Started",
-            "next_ritual": first_step.ritual_name,
-            "next_ritual_day_label": first_step.scheduled_day_label,
-            "day_plan_rituals": [first_step.ritual_name],
-        }
+def _format_simulated_time_label(simulated_minutes: int) -> str:
+    """Turn an absolute simulated-minute offset into a readable day/time label."""
+    bounded_minutes = max(int(simulated_minutes), 0)
+    day_index, minute_of_day = divmod(bounded_minutes, MINUTES_PER_SIMULATED_DAY)
+    hours, minutes = divmod(minute_of_day, 60)
+    return f"Day {day_index} – {hours:02d}:{minutes:02d}"
 
-    bounded_tick = max(int(tick), 0)
-    if bounded_tick >= len(HAJJ_RITUAL_SCHEDULE):
-        # After the final ritual tick, keep labels in a completed state instead
-        # of wrapping around to the beginning.
-        return {
-            "simulation_ritual_index": len(HAJJ_RITUAL_SCHEDULE),
-            "simulation_day_index": HAJJ_DAY_SLOTS[-1].day_index,
-            "simulation_day_label": "Completed",
-            "current_ritual": "Hajj Complete",
-            "next_ritual": "Completed",
-            "next_ritual_day_label": "Completed",
-            "day_plan_rituals": [],
-        }
 
-    current_step = get_simulation_ritual_step(bounded_tick)
-    next_step = get_next_simulation_ritual_step(bounded_tick)
-    day_slot = get_simulation_day_slot(current_step.scheduled_day_index)
+def _time_engine_payload(
+    simulated_minutes: int,
+    simulation_ritual_index: int,
+    simulation_day_index: int,
+    simulation_day_label: str,
+    current_ritual: str,
+    next_ritual: str,
+    next_ritual_day_label: str,
+    day_plan_rituals: List[str],
+    ritual_window_open: bool,
+) -> dict:
+    """Assemble the shared payload shape returned by every time-lookup branch."""
+    bounded_minutes = max(int(simulated_minutes), 0)
     return {
-        "simulation_ritual_index": bounded_tick,
-        "simulation_day_index": current_step.scheduled_day_index,
-        "simulation_day_label": current_step.scheduled_day_label,
-        "current_ritual": current_step.ritual_name,
-        "next_ritual": next_step.ritual_name if next_step else "Completed",
-        "next_ritual_day_label": next_step.scheduled_day_label if next_step else "Completed",
-        "day_plan_rituals": list(day_slot.rituals),
+        "simulation_ritual_index": simulation_ritual_index,
+        "simulation_day_index": simulation_day_index,
+        "simulation_day_label": simulation_day_label,
+        "current_ritual": current_ritual,
+        "next_ritual": next_ritual,
+        "next_ritual_day_label": next_ritual_day_label,
+        "day_plan_rituals": day_plan_rituals,
+        "ritual_window_open": ritual_window_open,
+        "simulated_minutes": bounded_minutes,
+        "simulated_day_index": bounded_minutes // MINUTES_PER_SIMULATED_DAY,
+        "simulated_time_label": _format_simulated_time_label(simulated_minutes),
     }
+
+
+def get_ritual_window_for_minutes(
+    simulated_minutes: int,
+    ritual_schedule: Optional[Sequence[dict]] = None,
+) -> dict:
+    """Map an absolute simulated-minute offset to the active/upcoming ritual.
+
+    Unlike the old tick-index lookup, a ritual is only "open" while the clock
+    sits inside its own [window_start_minute, window_end_minute) range. Time
+    spent between two windows is reported against the *next* step with
+    ritual_window_open=False, so agents wait instead of skipping ahead.
+    """
+    schedule_steps = [
+        ritual_step_from_payload(raw_step) for raw_step in (ritual_schedule or get_ritual_schedule_payload())
+    ] or list(HAJJ_RITUAL_SCHEDULE)
+
+    first_step = schedule_steps[0]
+    if int(simulated_minutes) < first_step.window_start_minute:
+        return _time_engine_payload(
+            simulated_minutes=simulated_minutes,
+            simulation_ritual_index=-1,
+            simulation_day_index=first_step.scheduled_day_index,
+            simulation_day_label=first_step.scheduled_day_label,
+            current_ritual="Not Started",
+            next_ritual=first_step.ritual_name,
+            next_ritual_day_label=first_step.scheduled_day_label,
+            day_plan_rituals=[first_step.ritual_name],
+            ritual_window_open=False,
+        )
+
+    last_step = schedule_steps[-1]
+    if int(simulated_minutes) >= last_step.window_end_minute:
+        return _time_engine_payload(
+            simulated_minutes=simulated_minutes,
+            simulation_ritual_index=len(schedule_steps),
+            simulation_day_index=last_step.scheduled_day_index,
+            simulation_day_label="Completed",
+            current_ritual="Hajj Complete",
+            next_ritual="Completed",
+            next_ritual_day_label="Completed",
+            day_plan_rituals=[],
+            ritual_window_open=False,
+        )
+
+    for index, step in enumerate(schedule_steps):
+        window_is_open = step.window_start_minute <= int(simulated_minutes) < step.window_end_minute
+        still_waiting_for_step = int(simulated_minutes) < step.window_start_minute
+        if not (window_is_open or still_waiting_for_step):
+            continue
+        next_step = schedule_steps[index + 1] if index + 1 < len(schedule_steps) else None
+        day_slot = get_simulation_day_slot(step.scheduled_day_index)
+        return _time_engine_payload(
+            simulated_minutes=simulated_minutes,
+            simulation_ritual_index=index,
+            simulation_day_index=step.scheduled_day_index,
+            simulation_day_label=step.scheduled_day_label,
+            current_ritual=step.ritual_name,
+            next_ritual=next_step.ritual_name if next_step else "Completed",
+            next_ritual_day_label=next_step.scheduled_day_label if next_step else "Completed",
+            day_plan_rituals=list(day_slot.rituals),
+            ritual_window_open=window_is_open,
+        )
+
+    # Bounds checks above guarantee one of the branches matches; this is an
+    # unreachable safety net in case a malformed custom schedule slips through.
+    return _time_engine_payload(
+        simulated_minutes=simulated_minutes,
+        simulation_ritual_index=len(schedule_steps),
+        simulation_day_index=last_step.scheduled_day_index,
+        simulation_day_label="Completed",
+        current_ritual="Hajj Complete",
+        next_ritual="Completed",
+        next_ritual_day_label="Completed",
+        day_plan_rituals=[],
+        ritual_window_open=False,
+    )
+
+
+def get_simulation_tick_payload(tick: int) -> dict:
+    """Backward-compatible entry point: converts a tick index to simulated
+    minutes, then delegates to the time-window lookup."""
+    if int(tick) < 0:
+        simulated_minutes = -1
+    else:
+        simulated_minutes = max(int(tick), 0) * SIMULATED_MINUTES_PER_TICK
+    return get_ritual_window_for_minutes(simulated_minutes)
 
 
 def build_ritual_day_label(step: RitualStep) -> str:
@@ -479,6 +635,104 @@ def get_reasonable_nodes_for_step(step: RitualStep) -> List[str]:
 
 
 # ============================================================
+# 2b) Zone taxonomy and inter-city corridors
+# ------------------------------------------------------------
+# Movement within a zone stays instant/individual (as in round 1).
+# Movement between zones is now strictly bus-only and takes multiple
+# ticks, modeled by the corridor tables below.
+# ============================================================
+
+PEDESTRIAN_ZONES: Dict[str, Tuple[str, ...]] = {
+    "Airport": ("Jeddah_Airport", "Pilgrim_Country_Airport"),
+    "Haram": (
+        "Makkah_Arrival_Hub", "Masjid_al_Haram_Perimeter", "Kaaba",
+        "Tawaf_Area", "Sai_Corridor", "Makkah_Bus_Station",
+    ),
+    "Aziziyah": ("Aziziyah_Zone",),
+    "Mina": (
+        "Mina_West_Gate", "Mina_Camp_1", "Mina_Camps_Core", "Mina_Camp_2",
+        "Mina_Camp_4", "Mina_East_Gate", "Jamarat_Bridge", "Jamarat_Complex",
+        "Jamarat", "Sacrifice_Zone", "Security_Checkpoint_1", "Medical_Post_1",
+        "Field_Hospital", "Emergency_Point", "Emergency_Point_1",
+        "Emergency_Point_2", "Police_Assist_Point", "Shade_Corridor",
+        "Shade_Corridor_2", "Cooling_Station_1",
+    ),
+    "Arafat": ("Arafat_Gate", "Arafat_Main_Field", "Arafat"),
+    "Muzdalifah": ("Muzdalifah_Open_Area", "Muzdalifah", "Transit_Corridor"),
+}
+
+# Reverse lookup built once: node id -> zone name.
+_NODE_TO_ZONE: Dict[str, str] = {
+    node: zone for zone, nodes in PEDESTRIAN_ZONES.items() for node in nodes
+}
+
+# Inter-city corridors requiring a bus, in simulated minutes (undirected).
+INTERCITY_CORRIDOR_MINUTES: Dict[Tuple[str, str], int] = {
+    ("Airport", "Haram"): 120,
+    ("Haram", "Aziziyah"): 60,
+    ("Aziziyah", "Mina"): 90,
+    ("Mina", "Arafat"): 150,
+    ("Mina", "Muzdalifah"): 90,
+    ("Arafat", "Muzdalifah"): 75,
+}
+
+
+def zone_of(node_id: str) -> str:
+    """Return the pedestrian zone a node belongs to (falls back to the node id itself)."""
+    return _NODE_TO_ZONE.get(node_id, node_id)
+
+
+def corridor_minutes(zone_a: str, zone_b: str) -> Optional[int]:
+    """Return the travel time between two zones, or None if they're the same zone."""
+    if zone_a == zone_b:
+        return None
+    return INTERCITY_CORRIDOR_MINUTES.get((zone_a, zone_b)) or INTERCITY_CORRIDOR_MINUTES.get((zone_b, zone_a))
+
+
+def corridor_ticks(zone_a: str, zone_b: str) -> int:
+    """Return how many ticks a corridor takes, recomputed from the live tick length."""
+    minutes = corridor_minutes(zone_a, zone_b)
+    if minutes is None:
+        return 1
+    return max(1, -(-minutes // SIMULATED_MINUTES_PER_TICK))  # ceiling division
+
+
+# Undirected adjacency built once from the corridor table, so a multi-city
+# route (e.g. Haram -> Arafat, which has no direct bus) can be walked one
+# direct-corridor hop at a time instead of requiring a single bus that
+# serves the whole trip.
+_CORRIDOR_ADJACENCY: Dict[str, List[str]] = {}
+for _zone_a, _zone_b in INTERCITY_CORRIDOR_MINUTES:
+    _CORRIDOR_ADJACENCY.setdefault(_zone_a, []).append(_zone_b)
+    _CORRIDOR_ADJACENCY.setdefault(_zone_b, []).append(_zone_a)
+
+
+def next_hop_zone(from_zone: str, to_zone: str) -> Optional[str]:
+    """Return the first zone along the shortest corridor path toward to_zone.
+
+    Breadth-first search over the small, fixed corridor graph. A pilgrim
+    bound for a non-adjacent zone boards toward this next hop, arrives,
+    then re-evaluates and queues again for the following hop -- so a full
+    multi-city trip is walked one direct bus corridor at a time.
+    """
+    if from_zone == to_zone:
+        return None
+    visited = {from_zone}
+    queue = deque([(from_zone, None)])
+    while queue:
+        zone, first_hop = queue.popleft()
+        for neighbor in _CORRIDOR_ADJACENCY.get(zone, ()):
+            if neighbor in visited:
+                continue
+            neighbor_first_hop = first_hop if first_hop is not None else neighbor
+            if neighbor == to_zone:
+                return neighbor_first_hop
+            visited.add(neighbor)
+            queue.append((neighbor, neighbor_first_hop))
+    return None
+
+
+# ============================================================
 # 3) Agent architecture: four-layer model
 # ------------------------------------------------------------
 # The simulation models each pilgrim through four layers:
@@ -507,6 +761,20 @@ class StaticProfile:
     language: str = "Arabic"
     risk_tolerance: float = 0.5
     performs_sacrifice: bool = True
+    # Every pilgrim now belongs to exactly one Hamlah (campaign) record.
+    # A Hamlah's dispatch_offset_minutes staggers when its members start moving.
+    hamlah_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Enforce that every pilgrim is assigned to a Hamlah.
+
+        Nationality-to-Hamlah *matching* is intentionally not checked here --
+        that requires the Hamlah registry, which lives in hajj_units.py, and
+        this module deliberately has no dependency on it. Matching is
+        enforced one layer up, at agent-creation time (AgentFactory / app.py).
+        """
+        if not self.hamlah_id:
+            raise ValueError(f"StaticProfile for {self.pilgrim_id!r} requires a hamlah_id")
 
 
 # ==========================================
@@ -533,6 +801,18 @@ class DynamicState:
     next_ritual_day_label: str = "Upon Arrival in Jeddah"
     ritual_window_open: bool = False
     active_route: List[str] = field(default_factory=list)
+    # Fuzzy drift: a straggling agent temporarily breaks from the group to
+    # take a random detour before the "reunite" rule pulls it back.
+    is_straggling: bool = False
+    straggle_ticks_remaining: int = 0
+    # Zone-aware travel: PEDESTRIAN (normal individual movement) |
+    # AWAITING_TRANSPORT (queued for a corridor bus) | IN_TRANSIT (boarded,
+    # hidden from the map while the bus carries it) | CHECKED_IN_HOTEL
+    # (resting at the Hamlah's base camp, also hidden from the map).
+    travel_state: str = "PEDESTRIAN"
+    boarded_unit_id: Optional[str] = None
+    awaiting_since_tick: int = -1
+    checked_in_hotel_id: Optional[str] = None
 
 
 # ==========================================
@@ -625,6 +905,25 @@ class BehaviorEngine:
         social = self.agent.memory.social
         hazard = environment_data.get("hazard")
 
+        # A pilgrim that is boarded on a bus or queued waiting for one has no
+        # agency this tick -- the ConvoyDispatchCoordinator fully owns its
+        # position and travel_state instead. (CHECKED_IN_HOTEL is different:
+        # it's just a descriptive status, not a lock -- normal decision-making
+        # continues below, and _execute_action checks the pilgrim out the
+        # moment it decides to actually move.)
+        if state.travel_state == "IN_TRANSIT":
+            return "IN_TRANSIT"
+        if state.travel_state == "AWAITING_TRANSPORT":
+            if zone_of(state.current_node) == zone_of(state.target_node):
+                # The ritual target advanced to something in the pilgrim's
+                # current zone while they were queued -- the convoy
+                # coordinator will never dispatch a same-zone "corridor", so
+                # release back to normal pedestrian decision-making instead
+                # of waiting forever for a bus that will never come.
+                state.travel_state = "PEDESTRIAN"
+            else:
+                return "AWAITING_TRANSPORT"
+
         # A recovered panicking pilgrim rests first before moving again.
         if state.is_panicking and state.stress < 88.0 and state.hydration > 45.0:
             return "REST"
@@ -640,9 +939,23 @@ class BehaviorEngine:
         if state.stress >= 80.0:
             return "AVOID_CROWD"
 
+        # An agent already straggling keeps drifting until its detour ends,
+        # even through the other checks below.
+        if state.is_straggling:
+            return "STRAGGLE"
+
         # Lost group members may try to reunite when stress is high.
         if not state.is_with_group and social.group_last_seen_node and state.stress >= 70.0:
             return f"MOVE_TO_{social.group_last_seen_node}"
+
+        # Fuzzy drift: a healthy, on-schedule agent can still randomly straggle
+        # from its group instead of moving in lockstep every tick.
+        if (
+            state.is_with_group
+            and state.ritual_window_open
+            and random.random() < self._roll_straggle_probability()
+        ):
+            return "STRAGGLE"
 
         # Ritual movement is blocked until the schedule opens the current window.
         if not state.ritual_window_open:
@@ -653,6 +966,20 @@ class BehaviorEngine:
             return "AVOID_CROWD"
 
         return f"MOVE_TO_{state.target_node}"
+
+    def _roll_straggle_probability(self) -> float:
+        """Estimate how likely this agent is to drift from its group this tick."""
+        # Lower mobility, higher risk tolerance, older age, and accumulated
+        # fatigue each nudge an individual pilgrim toward straggling.
+        profile = self.agent.profile
+        state = self.agent.state
+        probability = 0.05
+        probability += (1.0 - profile.mobility) * 0.15
+        probability += profile.risk_tolerance * 0.05
+        if profile.age >= 60:
+            probability += 0.05
+        probability += (state.fatigue / 100.0) * 0.10
+        return max(0.0, min(0.6, probability))
 
     def _apply_llm_override(self, environment_data: dict, proposed_action: str) -> Optional[str]:
         """Let an optional external model replace the rule-based action."""
@@ -684,7 +1011,7 @@ class PilgrimAgent:
         self.memory = Memory()
         self.brain = BehaviorEngine(self, llm_override=llm_override)
         self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
-        self._sync_ritual_goal({"simulation_ritual_index": -1})
+        self._sync_ritual_goal({"simulated_minutes": -1})
 
     def step(self, environment_data: dict) -> str:
         """Run one full perceive-decide-act cycle for this pilgrim."""
@@ -711,8 +1038,14 @@ class PilgrimAgent:
         self.memory.long_term.ritual_progress = preserved_progress
         self.state.current_node = self.start_node
         self.state.active_route = [self.start_node]
+        # Clear zone-travel state too -- a reset mid-transit or mid-hotel-stay
+        # shouldn't leave the pilgrim permanently stuck off the pedestrian map.
+        self.state.travel_state = "PEDESTRIAN"
+        self.state.boarded_unit_id = None
+        self.state.awaiting_since_tick = -1
+        self.state.checked_in_hotel_id = None
         self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
-        self._sync_ritual_goal({"simulation_ritual_index": -1})
+        self._sync_ritual_goal({"simulated_minutes": -1})
         self.memory.short_term.remember_event("Ritual schedule reset to start")
 
     def sync_with_environment(self, environment_data: dict) -> None:
@@ -720,24 +1053,39 @@ class PilgrimAgent:
         self._mark_completed_rituals_before_current_tick(environment_data)
         self._sync_ritual_goal(environment_data)
 
+    def _resolve_simulated_minutes(self, environment_data: dict) -> int:
+        """Convert the global simulated clock into this agent's effective time.
+
+        A Hamlah's dispatch_offset_minutes staggers when its members "start
+        the clock" relative to the rest of the population, so later-dispatched
+        groups lag behind rather than moving in lockstep with everyone else.
+        """
+        raw_minutes = int(environment_data.get("simulated_minutes", 0))
+        if raw_minutes < 0:
+            return raw_minutes
+        dispatch_offsets = environment_data.get("hamlah_dispatch_offsets") or {}
+        offset = float(dispatch_offsets.get(self.profile.hamlah_id, 0.0))
+        return max(int(raw_minutes - offset), 0)
+
+    def _current_window(self, environment_data: dict) -> dict:
+        """Look up the active/upcoming ritual window for this agent right now."""
+        simulated_minutes = self._resolve_simulated_minutes(environment_data)
+        return get_ritual_window_for_minutes(simulated_minutes, self.memory.long_term.ritual_schedule)
+
     def _sync_ritual_goal(self, environment_data: dict) -> None:
         """Set the current ritual, next ritual, target node, and window status."""
-        simulation_ritual_index = int(
-            environment_data.get(
-                "simulation_ritual_index",
-                environment_data.get("ritual_day_index", 0),
-            )
-        )
+        window = self._current_window(environment_data)
+        simulation_ritual_index = window["simulation_ritual_index"]
         self._mark_skipped_optional_rituals(simulation_ritual_index)
 
         if simulation_ritual_index < 0:
             # Before the first tick, show the first ritual as the upcoming target.
             first_step = ritual_step_from_payload(self.memory.long_term.ritual_schedule[0])
             self.state.ritual_day_index = -1
-            self.state.ritual_day_label = first_step.scheduled_day_label
+            self.state.ritual_day_label = window["simulation_day_label"]
             self.state.current_ritual = "Not Started"
-            self.state.next_ritual = first_step.ritual_name
-            self.state.next_ritual_day_label = first_step.scheduled_day_label
+            self.state.next_ritual = window["next_ritual"]
+            self.state.next_ritual_day_label = window["next_ritual_day_label"]
             self.state.target_node = first_step.target_node
             self.state.ritual_window_open = False
             self.state.active_route = [self.state.current_node]
@@ -765,7 +1113,7 @@ class PilgrimAgent:
                 self.state.active_route = []
                 self.state.ritual_day_index = len(self.memory.long_term.ritual_schedule) - 1
                 return
-            self.state.ritual_window_open = True
+            self.state.ritual_window_open = window["ritual_window_open"]
             self.state.ritual_day_index = step.sequence_order - 1
             self.state.ritual_day_label = build_ritual_day_label(step)
             self.state.current_ritual = step.ritual_name
@@ -780,12 +1128,7 @@ class PilgrimAgent:
         """Auto-complete rituals from earlier ticks so progress stays synchronized."""
         # If the global timeline advances beyond an earlier ritual, record it as
         # complete unless this agent intentionally skips that optional step.
-        simulation_ritual_index = int(
-            environment_data.get(
-                "simulation_ritual_index",
-                environment_data.get("ritual_day_index", 0),
-            )
-        )
+        simulation_ritual_index = self._current_window(environment_data)["simulation_ritual_index"]
         for step in HAJJ_RITUAL_SCHEDULE:
             if (step.sequence_order - 1) >= simulation_ritual_index:
                 break
@@ -806,12 +1149,7 @@ class PilgrimAgent:
                 self.memory.long_term.ritual_schedule,
             )
         else:
-            simulation_ritual_index = int(
-                environment_data.get(
-                    "simulation_ritual_index",
-                    environment_data.get("ritual_day_index", 0),
-                )
-            )
+            simulation_ritual_index = self._current_window(environment_data)["simulation_ritual_index"]
             if simulation_ritual_index < 0 or simulation_ritual_index >= len(HAJJ_RITUAL_SCHEDULE):
                 return
             step = self._get_applicable_step_for_tick(simulation_ritual_index)
@@ -1067,6 +1405,7 @@ class PilgrimAgent:
             # Waiting gives a small stress reduction and leaves the agent in place.
             self.state.active_route = []
             self.state.stress = max(0.0, self.state.stress - 2.0)
+            self._maybe_check_in_hotel(environment_data)
             return
 
         if action == "REST":
@@ -1076,10 +1415,44 @@ class PilgrimAgent:
             self.state.hydration = min(100.0, self.state.hydration + 14.0)
             if self.state.stress < 85.0 and self.state.hydration > 45.0:
                 self.state.is_panicking = False
+            self._maybe_check_in_hotel(environment_data)
+            return
+
+        if action == "AWAITING_TRANSPORT":
+            # Queued for a corridor bus; the ConvoyDispatchCoordinator boards
+            # it once a bus with room arrives at this stop. A small stress
+            # relief reflects standing and waiting rather than navigating.
+            self.state.stress = max(0.0, self.state.stress - 1.0)
+            return
+
+        if action == "IN_TRANSIT":
+            # Fully owned by the ConvoyDispatchCoordinator this tick.
+            return
+
+        if action == "STRAGGLE":
+            # A straggling agent takes a small random detour off the group's
+            # path; the existing "reunite" rule pulls it back once it clears.
+            self._maybe_check_out_hotel()
+            if not self.state.is_straggling:
+                self.state.is_straggling = True
+                self.state.straggle_ticks_remaining = random.randint(1, 3)
+            neighbors = ROUTE_GRAPH.get(self.state.current_node, [])
+            if neighbors:
+                detour_node = random.choice(neighbors)
+                self.state.hydration = max(0.0, self.state.hydration - 2.0)
+                self.state.fatigue = min(100.0, self.state.fatigue + 1.5)
+                self.state.stress = min(100.0, self.state.stress + 1.0)
+                self.state.current_node = detour_node
+                self.state.active_route = [detour_node]
+            self.state.is_with_group = False
+            self.state.straggle_ticks_remaining -= 1
+            if self.state.straggle_ticks_remaining <= 0:
+                self.state.is_straggling = False
             return
 
         if action == "AVOID_CROWD":
             # Avoidance moves toward an alternate lower-pressure node.
+            self._maybe_check_out_hotel()
             alternate_node = environment_data.get("alternate_node", self.state.current_node)
             self._apply_travel_load(
                 alternate_node,
@@ -1091,6 +1464,7 @@ class PilgrimAgent:
 
         if action == "ENTER_PANIC_MODE":
             # Panic movement is costlier and routes toward an emergency node.
+            self._maybe_check_out_hotel()
             self.state.is_panicking = True
             panic_node = environment_data.get("panic_node", self.state.current_node)
             self._apply_travel_load(
@@ -1101,9 +1475,37 @@ class PilgrimAgent:
             return
 
         if action.startswith("MOVE_TO_"):
-            # Normal ritual or group movement uses the encoded destination.
+            # Intra-zone movement still happens instantly, as in round 1.
+            # Crossing into a different zone now strictly requires a corridor
+            # bus, so the pilgrim queues up instead of teleporting there.
             destination = action.replace("MOVE_TO_", "", 1)
+            self._maybe_check_out_hotel()
+            if zone_of(self.state.current_node) != zone_of(destination):
+                self.state.travel_state = "AWAITING_TRANSPORT"
+                self.state.awaiting_since_tick = self.state.simulation_tick
+                self.state.active_route = []
+                return
             self._apply_travel_load(destination, environment_data)
+
+    def _hotel_info_for_hamlah(self, environment_data: dict) -> Optional[dict]:
+        """Look up this pilgrim's Hamlah's hotel from the shared environment payload."""
+        hamlah_hotel_map = environment_data.get("hamlah_hotel_map") or {}
+        return hamlah_hotel_map.get(self.profile.hamlah_id)
+
+    def _maybe_check_in_hotel(self, environment_data: dict) -> None:
+        """Check the pilgrim into its Hamlah's hotel if it is resting there."""
+        if self.state.checked_in_hotel_id:
+            return
+        hotel_info = self._hotel_info_for_hamlah(environment_data)
+        if hotel_info and self.state.current_node == hotel_info.get("hotel_node"):
+            self.state.checked_in_hotel_id = hotel_info.get("hotel_id")
+            self.state.travel_state = "CHECKED_IN_HOTEL"
+
+    def _maybe_check_out_hotel(self) -> None:
+        """Clear hotel check-in the moment the pilgrim starts moving for real."""
+        self.state.checked_in_hotel_id = None
+        if self.state.travel_state == "CHECKED_IN_HOTEL":
+            self.state.travel_state = "PEDESTRIAN"
 
     def get_snapshot(self) -> dict:
         """Return a JSON-ready representation of all four agent layers."""
@@ -1121,6 +1523,7 @@ class PilgrimAgent:
                 "language": self.profile.language,
                 "risk_tolerance": self.profile.risk_tolerance,
                 "performs_sacrifice": self.profile.performs_sacrifice,
+                "hamlah_id": self.profile.hamlah_id,
             },
             "state": {
                 "current_node": self.state.current_node,
@@ -1139,6 +1542,12 @@ class PilgrimAgent:
                 "next_ritual_day_label": self.state.next_ritual_day_label,
                 "ritual_window_open": self.state.ritual_window_open,
                 "active_route": self.state.active_route,
+                "is_straggling": self.state.is_straggling,
+                "straggle_ticks_remaining": self.state.straggle_ticks_remaining,
+                "travel_state": self.state.travel_state,
+                "boarded_unit_id": self.state.boarded_unit_id,
+                "awaiting_since_tick": self.state.awaiting_since_tick,
+                "checked_in_hotel_id": self.state.checked_in_hotel_id,
             },
             "memory": {
                 "short_term": {
@@ -1187,6 +1596,9 @@ class AgentFactory:
         ("Malaysian", "Malay"),
         ("Moroccan", "Arabic"),
     )
+    # "Jeddah_Airport" is the node id used throughout the simulation for the
+    # global starting point; the dashboard displays it as the Hajj Terminal at
+    # King Abdulaziz International Airport (KAIA) -- see web/app.js siteGps.
     DEFAULT_INITIAL_NODES: Sequence[str] = (
         "Jeddah_Airport",
     )
@@ -1233,6 +1645,7 @@ class AgentFactory:
         chronic_conditions: Optional[Sequence[str]] = None,
         risk_tolerance: Optional[float] = None,
         performs_sacrifice: Optional[bool] = None,
+        hamlah_id: Optional[str] = None,
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> PilgrimAgent:
         """Build one agent from explicit profile fields."""
@@ -1247,6 +1660,7 @@ class AgentFactory:
             language=language,
             risk_tolerance=risk_tolerance if risk_tolerance is not None else self._derive_risk_tolerance(age, health_status),
             performs_sacrifice=self._derive_sacrifice_participation() if performs_sacrifice is None else performs_sacrifice,
+            hamlah_id=hamlah_id,
         )
         return PilgrimAgent(
             static_profile=profile,
@@ -1260,9 +1674,17 @@ class AgentFactory:
         index: int,
         group_id: Optional[str] = None,
         target_node: Optional[str] = None,
+        hamlah_id: Optional[str] = None,
+        nationality_to_hamlah: Optional[Dict[str, str]] = None,
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> PilgrimAgent:
-        """Generate one synthetic pilgrim from the factory distributions."""
+        """Generate one synthetic pilgrim from the factory distributions.
+
+        Every pilgrim needs a Hamlah whose nationality matches its own. Pass
+        an explicit hamlah_id to force one, or nationality_to_hamlah (one
+        entry per possible nationality) so the right Hamlah is derived
+        automatically and can never mismatch by construction.
+        """
         # Synthetic agents get realistic variation in nationality, language,
         # age, health, mobility, group assignment, and ritual participation.
         nationality, language = self.random.choice(list(self.DEFAULT_NATIONALITIES))
@@ -1271,6 +1693,10 @@ class AgentFactory:
         mobility = self._derive_mobility(age, health_status)
         chronic_conditions = self._sample_conditions(health_status)
         pilgrim_group = group_id or f"G_{100 + ((index - 1) // 10):03d}"
+
+        resolved_hamlah_id = hamlah_id
+        if resolved_hamlah_id is None and nationality_to_hamlah is not None:
+            resolved_hamlah_id = nationality_to_hamlah.get(nationality)
 
         agent = self.create_agent(
             pilgrim_id=f"P_{index:04d}",
@@ -1284,6 +1710,7 @@ class AgentFactory:
             language=language,
             chronic_conditions=chronic_conditions,
             performs_sacrifice=self._derive_sacrifice_participation(),
+            hamlah_id=resolved_hamlah_id,
             llm_override=llm_override,
         )
         self._seed_memory(agent)
@@ -1293,6 +1720,7 @@ class AgentFactory:
         self,
         count: int,
         start_index: int = 1,
+        nationality_to_hamlah: Optional[Dict[str, str]] = None,
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> Dict[str, PilgrimAgent]:
         """Generate a dictionary of synthetic agents keyed by pilgrim ID."""
@@ -1300,7 +1728,11 @@ class AgentFactory:
         # all companions created in the same batch.
         agents = {}
         for index in range(start_index, start_index + count):
-            agent = self.generate_agent(index=index, llm_override=llm_override)
+            agent = self.generate_agent(
+                index=index,
+                nationality_to_hamlah=nationality_to_hamlah,
+                llm_override=llm_override,
+            )
             agents[agent.profile.pilgrim_id] = agent
         self._link_social_groups(agents)
         return agents
@@ -1319,6 +1751,7 @@ class AgentFactory:
             "language": snapshot["profile"]["language"],
             "risk_tolerance": snapshot["profile"]["risk_tolerance"],
             "performs_sacrifice": snapshot["profile"]["performs_sacrifice"],
+            "hamlah_id": snapshot["profile"]["hamlah_id"],
             "initial_node": snapshot["state"]["current_node"],
             "target_node": snapshot["state"]["target_node"],
             "social_memory": snapshot["memory"]["social"],
@@ -1410,6 +1843,7 @@ def build_agent_from_record(
         language=item.get("language", "Arabic"),
         risk_tolerance=float(item.get("risk_tolerance", 0.5)),
         performs_sacrifice=bool(item.get("performs_sacrifice", True)),
+        hamlah_id=item.get("hamlah_id"),
     )
 
     agent = PilgrimAgent(
@@ -1439,7 +1873,7 @@ def build_agent_from_record(
         "ritual_schedule",
         get_ritual_schedule_payload(include_optional_rituals=profile.performs_sacrifice),
     )
-    agent._sync_ritual_goal({"simulation_ritual_index": -1})
+    agent._sync_ritual_goal({"simulated_minutes": -1})
 
     return agent
 
@@ -1457,6 +1891,7 @@ def build_manual_agent(
     chronic_conditions: Optional[Sequence[str]] = None,
     risk_tolerance: float = 0.5,
     performs_sacrifice: bool = True,
+    hamlah_id: Optional[str] = None,
     llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
 ) -> PilgrimAgent:
     """Build a live PilgrimAgent from manual dashboard form values."""
@@ -1474,6 +1909,7 @@ def build_manual_agent(
         chronic_conditions=tuple(chronic_conditions or ()),
         risk_tolerance=float(risk_tolerance),
         performs_sacrifice=bool(performs_sacrifice),
+        hamlah_id=hamlah_id,
         llm_override=llm_override,
     )
     factory._seed_memory(agent)
