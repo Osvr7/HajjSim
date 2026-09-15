@@ -7,11 +7,15 @@ synthetic agents, and advancing the ritual simulation without a browser.
 
 import json
 
+# The CLI reuses the same agent model as the web app so both entry points
+# simulate identical pilgrim behavior.
 from hajj_agents import AgentFactory, PilgrimAgent, StaticProfile, get_simulation_tick_payload
 
 
 def build_profile(item):
     """Convert one JSON pilgrim record into the static agent profile layer."""
+    # StaticProfile contains only stable traits; live state and memory are
+    # restored separately when the PilgrimAgent object is created.
     return StaticProfile(
         pilgrim_id=item["pilgrim_id"],
         age=item["age"],
@@ -27,6 +31,8 @@ def build_profile(item):
 
 def load_agents_from_file(filename):
     """Reads the JSON file and creates a dictionary of PilgrimAgent objects."""
+    # The JSON file stores plain records, so the CLI rebuilds full agent objects
+    # before the user can inspect or step them.
     with open(filename, "r", encoding="utf-8") as file:
         data = json.load(file)
 
@@ -67,6 +73,8 @@ def load_agents_from_file(filename):
 
 def display_agent_info(agent):
     """Prints a formatted summary of the pilgrim's four-layer anatomy."""
+    # The snapshot is already JSON-style, making this function a read-only
+    # formatter for profile, dynamic state, and memory sections.
     snapshot = agent.get_snapshot()
     profile = snapshot["profile"]
     state = snapshot["state"]
@@ -114,6 +122,8 @@ def display_agent_info(agent):
 
 def main():
     """Run an interactive terminal menu for agent inspection and simulation."""
+    # Startup loads seed pilgrims and a deterministic generator for repeatable
+    # synthetic populations.
     print("Loading HajjSim Environment...")
     agents = load_agents_from_file("pilgrims.json")
     print(f"Successfully loaded {len(agents)} agents.\n")
@@ -122,6 +132,8 @@ def main():
 
     # The loop accepts small commands instead of running a full web server.
     while True:
+        # Each menu iteration accepts exactly one inspection, generation, step,
+        # or exit command.
         print("Available Pilgrim IDs:", ", ".join(agents.keys()))
         user_input = input(
             "Enter a Pilgrim ID, 'step', 'generate <count>', or 'exit': "

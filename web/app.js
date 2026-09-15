@@ -1,3 +1,10 @@
+// ============================================================
+// Static configuration data
+// ------------------------------------------------------------
+// This block defines map coordinates, route overlays, form option lists,
+// status colors, countries, and language defaults used by the dashboard.
+// ============================================================
+
 // Geographic coordinates for every simulation node displayed on the Leaflet map.
 const siteGps = {
   Jeddah_Airport: { lat: 21.6702, lng: 39.1525, label: "Jeddah Airport" },
@@ -198,6 +205,13 @@ const countryLanguageMap = {
   "United Kingdom": "English"
 };
 
+// ============================================================
+// DOM references and runtime state
+// ------------------------------------------------------------
+// This block collects page elements once, then stores frontend-only state such
+// as loaded agents, map layers, filters, playback timers, and chart data.
+// ============================================================
+
 // Main DOM references used throughout rendering and event handling.
 const summaryCards = document.querySelector("#summaryCards");
 const mapCanvas = document.querySelector("#mapCanvas");
@@ -286,6 +300,13 @@ const NODE_PRESSURE_BASELINES = {
   Police_Assist_Point: 7,
   Emergency_Point: 6
 };
+
+// ============================================================
+// Setup helpers and small utilities
+// ------------------------------------------------------------
+// These functions populate form controls, normalize API access, derive risk
+// labels, and manage playback controls.
+// ============================================================
 
 // Populate the nationality dropdown from the full country list.
 function populateNationalityOptions() {
@@ -426,9 +447,17 @@ function stopPlayback() {
   setPlaybackState(false);
 }
 
+// ============================================================
+// Summary and map rendering
+// ------------------------------------------------------------
+// This block renders the hero metrics, initializes Leaflet, draws route/site
+// layers, animates agent markers, and builds the pressure heatmap.
+// ============================================================
+
 // Render the top summary cards from aggregate backend metrics.
 function renderSummary(summary) {
   summaryCards.innerHTML = "";
+  // Prefer the readable GPS label, then fall back to the raw node id.
   const currentLocationLabel =
     siteGps[summary.leading_current_location]?.label ||
     summary.leading_current_location ||
@@ -457,6 +486,7 @@ function renderSummary(summary) {
     ["Summary Overview", overviewItems],
     ["Operational Snapshot", operationsItems]
   ].forEach(([title, items]) => {
+    // Each summary section is rebuilt from the latest backend snapshot.
     const section = document.createElement("section");
     section.className = "summary-section";
     section.innerHTML = `<h3 class="summary-section-title">${title}</h3>`;
@@ -555,6 +585,7 @@ function renderRoutes() {
     return;
   }
   holyRoutes.forEach((route, idx) => {
+    // Convert route node ids into Leaflet latitude/longitude points.
     const points = route
       .map((nodeId) => siteGps[nodeId])
       .filter(Boolean)
@@ -620,6 +651,7 @@ function animateMarkerTo(marker, targetLatLng, duration = 420) {
 // Create, update, and remove Leaflet markers for the visible agent set.
 function renderAgentMarkers(visibleAgents) {
   const visibleIds = new Set(visibleAgents.map((agent) => agent.profile.pilgrim_id));
+  // Remove markers for agents hidden by filters or no longer present.
   agentMarkers.forEach((marker, agentId) => {
     if (!visibleIds.has(agentId)) {
       mapLayerGroup.removeLayer(marker);
@@ -628,6 +660,7 @@ function renderAgentMarkers(visibleAgents) {
   });
 
   visibleAgents.forEach((agent, index) => {
+    // New markers are created once; existing markers are updated and animated.
     const node = agent.state.current_node;
     const base = siteGps[node] || { lat: 21.392, lng: 39.924, label: "Fallback" };
     const status = getAgentStatus(agent);
@@ -682,6 +715,7 @@ function renderHeatmap(currentAgents, environment) {
   }
 
   const countsByNode = {};
+  // Count visible pilgrims at each node before converting counts to heat values.
   currentAgents.forEach((agent) => {
     const node = agent.state.current_node;
     countsByNode[node] = (countsByNode[node] || 0) + 1;
@@ -694,6 +728,7 @@ function renderHeatmap(currentAgents, environment) {
     : 1;
   const heatPoints = Object.entries(countsByNode)
     .map(([nodeId, count]) => {
+      // Pressure compares current count against a rough capacity baseline.
       const site = siteGps[nodeId];
       if (!site) {
         return null;
@@ -726,6 +761,13 @@ function renderHeatmap(currentAgents, environment) {
   });
   heatLayer.addTo(map);
 }
+
+// ============================================================
+// Roster, chart, and card rendering
+// ------------------------------------------------------------
+// This block filters/sorts agents, renders roster cards, updates card focus
+// behavior, and draws the operational chart.
+// ============================================================
 
 // Rebuild group filter options from the currently loaded roster.
 function populateGroupFilterOptions(currentAgents) {
@@ -770,6 +812,8 @@ function syncSortControl() {
 
 // Apply search, group, health, risk, and sort controls to the roster.
 function getDisplayedAgents(currentAgents) {
+  // Filtering is applied before sorting so the map and roster use the same
+  // visible agent list.
   const filteredAgents = currentAgents.filter((agent) => {
     const searchQuery = rosterFilters.searchQuery.trim().toLowerCase();
     const searchableFields = [
@@ -816,6 +860,8 @@ function renderAgents(currentAgents) {
   const visibleAgents = getDisplayedAgents(currentAgents);
   agentGrid.innerHTML = "";
 
+  // Empty-state rendering keeps the roster area informative when filters hide
+  // every agent.
   if (!visibleAgents.length) {
     updateRosterMeta(0, currentAgents.length);
     agentGrid.innerHTML = `<div class="roster-empty">No pilgrims match the current filters.</div>`;
@@ -823,6 +869,7 @@ function renderAgents(currentAgents) {
   }
 
   visibleAgents.forEach((agent) => {
+    // Cards are cloned from the HTML template and populated with snapshot data.
     const fragment = agentCardTemplate.content.cloneNode(true);
     const card = fragment.querySelector(".agent-card");
     const statusKey = getAgentStatus(agent);
@@ -898,6 +945,8 @@ function renderChart(history) {
   const panickingSeries = history.map((entry) => Number(entry.panicking_agents || 0));
 
   if (!analyticsChart) {
+    // First render creates the Chart.js instance with one vitals axis and one
+    // pilgrim-count axis.
     analyticsChart = new Chart(analyticsChartCanvas, {
       type: "line",
       data: {
@@ -973,6 +1022,7 @@ function renderChart(history) {
   }
 
   analyticsChart.data.labels = labels;
+  // Later renders reuse the chart instance and replace only the data series.
   analyticsChart.data.datasets[0].data = stressSeries;
   analyticsChart.data.datasets[1].data = supportSeries;
   analyticsChart.data.datasets[2].data = highRiskSeries;
@@ -1030,6 +1080,13 @@ function focusNodeAgents(nodeId) {
 function jitter(seed, amount) {
   return ((Math.sin(seed * 12.9898) * 43758.5453) % 1) * amount;
 }
+
+// ============================================================
+// Forms, API refresh, and event wiring
+// ------------------------------------------------------------
+// This block turns form input into API payloads, refreshes all dashboard panels,
+// controls playback, and connects user actions to backend endpoints.
+// ============================================================
 
 // Convert the manual agent form into the API payload expected by the backend.
 function getManualPayload() {
@@ -1179,6 +1236,7 @@ function focusAgentOnMap(agentId) {
 
 // Fetch agents, summary, and environment together, then rerender the dashboard.
 async function refreshAll() {
+  // Fetch independent resources in parallel so the dashboard refresh stays fast.
   const [agentResponse, summaryResponse, environmentResponse] = await Promise.all([
     fetchJson("/api/agents"),
     fetchJson("/api/summary"),
@@ -1202,6 +1260,8 @@ async function runSimulationStep() {
     return;
   }
 
+  // The busy flag prevents overlapping step requests from double-advancing the
+  // simulation when users click quickly or playback is running.
   simulationBusy = true;
   try {
     await fetchJson("/api/simulate/step", {
@@ -1221,6 +1281,8 @@ function startPlayback() {
     clearInterval(playbackTimer);
   }
 
+  // Playback repeatedly posts the current environment form values as each tick
+  // is advanced.
   setPlaybackState(true);
   playbackTimer = setInterval(() => {
     runSimulationStep().catch((error) => {

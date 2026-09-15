@@ -11,6 +11,15 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 
+# ============================================================
+# 1) Hajj ritual timeline and schedule
+# ------------------------------------------------------------
+# This block defines the ordered sequence of Hajj rituals, the
+# high-level day structure, and the metadata used by the UI and
+# simulation to track which ritual is active at each tick.
+# ============================================================
+
+
 @dataclass(frozen=True)
 class RitualStep:
     """One ordered ritual in the simulated Hajj schedule."""
@@ -209,6 +218,15 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
 OPTIONAL_RITUAL_PROGRESS_KEYS = {"sacrifice_complete"}
 
 
+# ============================================================
+# 2) Route network and movement map
+# ------------------------------------------------------------
+# This block defines the simplified map of pilgrimage locations and
+# the approach start points used when an agent plans a path to a
+# ritual target. The route graph is later converted to a BFS network.
+# ============================================================
+
+
 # Route segments are the simplified movement network between Hajj landmarks.
 # They are converted into a bidirectional graph for path planning.
 ROUTE_SEGMENTS: Tuple[Tuple[str, ...], ...] = (
@@ -256,6 +274,8 @@ def get_pending_ritual_step(
     ritual_schedule: Optional[Sequence[dict]] = None,
 ) -> Optional[RitualStep]:
     """Find the first ritual step not yet completed by an agent."""
+    # Compare progress keys rather than ritual names so optional/custom schedules
+    # stay stable even if display labels change.
     completed = set(ritual_progress)
     schedule_steps = ritual_schedule or get_ritual_schedule_payload()
     for raw_step in schedule_steps:
@@ -270,6 +290,7 @@ def get_completed_ritual_steps(
     ritual_schedule: Optional[Sequence[dict]] = None,
 ) -> List[RitualStep]:
     """Return all schedule steps whose progress keys are already recorded."""
+    # Rebuild typed steps from payloads before filtering completed rituals.
     completed = set(ritual_progress)
     schedule_steps = ritual_schedule or get_ritual_schedule_payload()
     steps = [ritual_step_from_payload(raw_step) for raw_step in schedule_steps]
@@ -281,6 +302,7 @@ def get_following_ritual_step(
     ritual_schedule: Optional[Sequence[dict]] = None,
 ) -> Optional[RitualStep]:
     """Return the ritual that comes immediately after the current pending one."""
+    # First find the current pending step, then scan once more for its successor.
     schedule_steps = ritual_schedule or get_ritual_schedule_payload()
     pending_step = get_pending_ritual_step(ritual_progress, schedule_steps)
     if pending_step is None:
@@ -355,6 +377,8 @@ def get_next_simulation_ritual_step(tick: int) -> Optional[RitualStep]:
 def get_simulation_tick_payload(tick: int) -> dict:
     """Build the combined day/ritual metadata used by agents and the UI."""
     if int(tick) < 0:
+        # Before the first step, the dashboard shows the schedule as not started
+        # while still previewing the first ritual.
         first_step = HAJJ_RITUAL_SCHEDULE[0]
         return {
             "simulation_ritual_index": -1,
@@ -368,6 +392,8 @@ def get_simulation_tick_payload(tick: int) -> dict:
 
     bounded_tick = max(int(tick), 0)
     if bounded_tick >= len(HAJJ_RITUAL_SCHEDULE):
+        # After the final ritual tick, keep labels in a completed state instead
+        # of wrapping around to the beginning.
         return {
             "simulation_ritual_index": len(HAJJ_RITUAL_SCHEDULE),
             "simulation_day_index": HAJJ_DAY_SLOTS[-1].day_index,
@@ -401,6 +427,8 @@ def _build_route_graph() -> Dict[str, List[str]]:
     """Convert route segments into a bidirectional adjacency list."""
     graph: Dict[str, List[str]] = {}
     for segment in ROUTE_SEGMENTS:
+        # Adjacent locations in each route segment are connected both ways so
+        # route planning can move forward or backward along the corridor.
         for left, right in zip(segment, segment[1:]):
             graph.setdefault(left, []).append(right)
             graph.setdefault(right, []).append(left)
@@ -413,6 +441,8 @@ ROUTE_GRAPH = _build_route_graph()
 
 def plan_route(current_node: str, destination: str) -> List[str]:
     """Find a simple shortest route between two nodes using breadth-first search."""
+    # Trivial and unknown-node cases return direct routes so movement always has
+    # a usable path, even for custom nodes.
     if current_node == destination:
         return [current_node]
     if current_node not in ROUTE_GRAPH or destination not in ROUTE_GRAPH:
@@ -421,6 +451,8 @@ def plan_route(current_node: str, destination: str) -> List[str]:
     frontier: deque[Tuple[str, List[str]]] = deque([(current_node, [current_node])])
     visited = {current_node}
 
+    # Breadth-first search explores nearby nodes first, producing the shortest
+    # route through the simplified graph.
     while frontier:
         node, path = frontier.popleft()
         for neighbor in ROUTE_GRAPH.get(node, []):
@@ -444,6 +476,18 @@ def get_ritual_approach_route(step: RitualStep) -> List[str]:
 def get_reasonable_nodes_for_step(step: RitualStep) -> List[str]:
     """Return nodes that count as reasonable locations for a ritual step."""
     return [step.target_node]
+
+
+# ============================================================
+# 3) Agent architecture: four-layer model
+# ------------------------------------------------------------
+# The simulation models each pilgrim through four layers:
+#   1. Static profile (identity, health, risk profile)
+#   2. Dynamic state (current values and active ritual)
+#   3. Memory (recent, long-term, and social knowledge)
+#   4. Behavior engine (decision-making logic)
+# This structure makes each pilgrim behave like a reusable agent.
+# ============================================================
 
 
 # ==========================================
@@ -549,6 +593,10 @@ class Memory:
 # ==========================================
 # LAYER 4: BEHAVIOR ENGINE (HOW THE PILGRIM DECIDES)
 # ==========================================
+# This class turns the pilgrim's state and the environment into an
+# action such as moving, waiting, resting, or entering panic mode.
+# The logic is rule-based first and can optionally be overridden by
+# an external model or custom callback.
 class BehaviorEngine:
     """Layer 4: choose an action from the agent's state and environment."""
 
@@ -563,6 +611,8 @@ class BehaviorEngine:
 
     def decide_action(self, environment_data: dict) -> str:
         """Pick the final action, optionally allowing an external override."""
+        # Rule-based logic is the default; the optional override can replace it
+        # for experiments without changing the core model.
         rule_based_action = self._rule_based_decision(environment_data)
         llm_action = self._apply_llm_override(environment_data, rule_based_action)
         return llm_action or rule_based_action
@@ -614,6 +664,9 @@ class BehaviorEngine:
 # ==========================================
 # MASTER AGENT
 # ==========================================
+# This is the main runtime object used by the simulation. It owns
+# the pilgrim's behavior, memory, state updates, ritual progress,
+# movement, and action execution during each simulation tick.
 class PilgrimAgent:
     """A complete simulated pilgrim with profile, state, memory, and behavior."""
 
@@ -635,6 +688,8 @@ class PilgrimAgent:
 
     def step(self, environment_data: dict) -> str:
         """Run one full perceive-decide-act cycle for this pilgrim."""
+        # One step updates ritual context, observes the environment, chooses an
+        # action, executes it, and records any completed ritual.
         self.state.simulation_tick += 1
         self._sync_ritual_goal(environment_data)
         self._mark_completed_rituals_before_current_tick(environment_data)
@@ -647,6 +702,8 @@ class PilgrimAgent:
 
     def reset_ritual_cycle(self) -> None:
         """Restart the ritual journey while preserving arrival registration."""
+        # Arrival registration is kept because it represents baseline presence,
+        # while ritual-specific progress is cleared for a fresh run.
         preserved_progress = [
             progress for progress in self.memory.long_term.ritual_progress
             if progress == "arrival_registered"
@@ -721,6 +778,8 @@ class PilgrimAgent:
 
     def _mark_completed_rituals_before_current_tick(self, environment_data: dict) -> None:
         """Auto-complete rituals from earlier ticks so progress stays synchronized."""
+        # If the global timeline advances beyond an earlier ritual, record it as
+        # complete unless this agent intentionally skips that optional step.
         simulation_ritual_index = int(
             environment_data.get(
                 "simulation_ritual_index",
@@ -737,6 +796,8 @@ class PilgrimAgent:
 
     def _update_ritual_progress(self, environment_data: Optional[dict] = None) -> None:
         """Record a ritual as completed when the pilgrim reaches its target node."""
+        # Progress is only updated during an open ritual window and only when the
+        # pilgrim is exactly at the target node for the active step.
         if not self.state.ritual_window_open:
             return
         if environment_data is None:
@@ -823,6 +884,8 @@ class PilgrimAgent:
 
     def _resolve_route(self, destination: str) -> List[str]:
         """Reuse a remembered route when possible, otherwise plan a new path."""
+        # Prefer a route already learned by the agent when the current node and
+        # destination appear in the right order.
         remembered_route = list(self.memory.long_term.known_routes.get(destination, []))
         if remembered_route and destination in remembered_route and self.state.current_node in remembered_route:
             current_index = remembered_route.index(self.state.current_node)
@@ -952,6 +1015,7 @@ class PilgrimAgent:
         stress_relief: float = 0.0,
     ) -> None:
         """Move to a destination and apply physical cost based on route length."""
+        # Longer routes and lower mobility increase the physical cost of moving.
         route = self._resolve_route(destination)
         hops = max(0, len(route) - 1)
         if hops <= 0:
@@ -963,6 +1027,8 @@ class PilgrimAgent:
         hazard = str(environment_data.get("hazard") or "")
         mobility_penalty = max(0.0, 1.0 - self.profile.mobility)
 
+        # Travel costs combine route length, heat, mobility, and the kind of
+        # movement being performed.
         travel_hydration_loss = (
             (2.1 * hops) +
             (mobility_penalty * 5.0) +
@@ -1041,6 +1107,8 @@ class PilgrimAgent:
 
     def get_snapshot(self) -> dict:
         """Return a JSON-ready representation of all four agent layers."""
+        # Snapshot output mirrors the four-layer model so the dashboard can show
+        # profile, state, memory, and schedule details without direct objects.
         return {
             "profile": {
                 "pilgrim_id": self.profile.pilgrim_id,
@@ -1092,6 +1160,15 @@ class PilgrimAgent:
                 },
             },
         }
+
+
+# ============================================================
+# 4) Synthetic population generation and record rebuilding
+# ------------------------------------------------------------
+# This block generates new pilgrims from demographic patterns, builds
+# manual dashboard users, and reconstructs agents from saved JSON
+# records so the simulation can continue across sessions.
+# ============================================================
 
 
 class AgentFactory:
@@ -1186,6 +1263,8 @@ class AgentFactory:
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> PilgrimAgent:
         """Generate one synthetic pilgrim from the factory distributions."""
+        # Synthetic agents get realistic variation in nationality, language,
+        # age, health, mobility, group assignment, and ritual participation.
         nationality, language = self.random.choice(list(self.DEFAULT_NATIONALITIES))
         age = self.random.randint(18, 90)
         health_status = self._weighted_choice(self.DEFAULT_HEALTH_WEIGHTS)
@@ -1217,6 +1296,8 @@ class AgentFactory:
         llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
     ) -> Dict[str, PilgrimAgent]:
         """Generate a dictionary of synthetic agents keyed by pilgrim ID."""
+        # Generated agents are linked after creation so group memory can refer to
+        # all companions created in the same batch.
         agents = {}
         for index in range(start_index, start_index + count):
             agent = self.generate_agent(index=index, llm_override=llm_override)
@@ -1316,6 +1397,8 @@ def build_agent_from_record(
     llm_override: Optional[Callable[["PilgrimAgent", dict, str], Optional[str]]] = None,
 ) -> PilgrimAgent:
     """Rebuild a live PilgrimAgent from a JSON record."""
+    # Saved JSON contains primitive values, so profile, state, social memory, and
+    # long-term memory are rebuilt into their runtime classes here.
     profile = StaticProfile(
         pilgrim_id=item["pilgrim_id"],
         age=int(item["age"]),

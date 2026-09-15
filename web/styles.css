@@ -1,3 +1,10 @@
+/* ============================================================
+   Theme and base page setup
+   ------------------------------------------------------------
+   This block defines shared colors, typography defaults, page background,
+   and the responsive outer shell used by the whole dashboard.
+   ============================================================ */
+
 :root {
   /* Theme colors shared across the dashboard. */
   --bg-mint: #edf8f0;
@@ -63,6 +70,7 @@ body::before {
 }
 
 .eyebrow {
+  /* Small label above the main dashboard title. */
   margin: 0 0 10px;
   font-family: "DM Mono", monospace;
   font-size: 0.78rem;
@@ -72,6 +80,7 @@ body::before {
   text-shadow: 0 1px 6px rgba(255, 255, 255, 0.18);
 }
 
+/* Shared heading and paragraph reset keeps browser defaults predictable. */
 h1,
 h2,
 h3,
@@ -98,6 +107,7 @@ label,
 input,
 select,
 button {
+  /* Common readable size for copy, labels, form controls, and buttons. */
   font-size: 0.98rem;
 }
 
@@ -106,6 +116,7 @@ button {
 .mini-stats,
 .detail-item,
 .status-pill {
+  /* Muted text color for secondary information. */
   color: var(--muted);
 }
 
@@ -192,6 +203,13 @@ button {
   color: var(--brand-dark);
 }
 
+/* ============================================================
+   Main layout, panels, and forms
+   ------------------------------------------------------------
+   This block controls the dashboard grid, reusable panels, form spacing,
+   input styling, buttons, and playback controls.
+   ============================================================ */
+
 .layout {
   /* Two-column desktop layout: controls on the left, map on the right. */
   display: grid;
@@ -226,6 +244,7 @@ button {
 }
 
 label {
+  /* Labels wrap their own controls and provide consistent vertical spacing. */
   display: grid;
   gap: 7px;
   font-weight: 600;
@@ -249,6 +268,7 @@ label {
 
 input,
 select {
+  /* Shared form control treatment for text fields, numbers, and dropdowns. */
   width: 100%;
   padding: 11px 12px;
   border-radius: 12px;
@@ -296,6 +316,7 @@ button:hover {
 }
 
 .divider {
+  /* Thin separator between related form/dashboard sections. */
   height: 1px;
   background: linear-gradient(90deg, transparent 0%, var(--line) 22%, var(--line) 78%, transparent 100%);
   margin: 14px 0;
@@ -314,6 +335,7 @@ button:hover {
 }
 
 .environment-tick {
+  /* Compact readout rows for current day, ritual, and tick labels. */
   margin: 0;
   font-size: 0.92rem;
 }
@@ -321,6 +343,13 @@ button:hover {
 .environment-tick strong {
   color: var(--brand-dark);
 }
+
+/* ============================================================
+   Map, legend, and agent markers
+   ------------------------------------------------------------
+   This block sizes the Leaflet map, styles the overlay legend, and draws the
+   custom HTML pilgrim marker used by app.js.
+   ============================================================ */
 
 .map-canvas {
   /* Fixed-height map area so Leaflet can calculate tiles correctly. */
@@ -331,6 +360,7 @@ button:hover {
 }
 
 .map-wrap {
+  /* Positioning context for the legend overlay. */
   position: relative;
 }
 
@@ -382,6 +412,7 @@ button:hover {
 }
 
 .pilgrim-marker {
+  /* Container for the marker head/body pieces. */
   position: relative;
   width: 22px;
   height: 30px;
@@ -426,6 +457,13 @@ button:hover {
 .pilgrim-marker.high_risk .pilgrim-body { background: #c2402f; }
 .pilgrim-marker.panicking .pilgrim-body { background: #6d3fd1; }
 
+/* ============================================================
+   Chart and roster
+   ------------------------------------------------------------
+   This block styles the operational graph, roster toolbar, empty state, agent
+   cards, focus highlight, and marker hover tooltip.
+   ============================================================ */
+
 .chart-panel {
   /* Full-width panel for the operational trend chart. */
   margin-bottom: 16px;
@@ -457,6 +495,7 @@ button:hover {
 }
 
 .toolbar-field {
+  /* Prevent long filter labels from forcing the toolbar wider than its grid. */
   min-width: 0;
 }
 
@@ -566,6 +605,7 @@ button:hover {
 }
 
 .agent-card-top {
+  /* Top row in each card: pilgrim identity on the left, status on the right. */
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -585,6 +625,7 @@ button:hover {
 }
 
 .status-pill {
+  /* Compact status badge inside each roster card. */
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
@@ -622,6 +663,13 @@ button:hover {
 .detail-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+/* ============================================================
+   Responsive behavior
+   ------------------------------------------------------------
+   These media queries collapse the dashboard for tablet and phone screens
+   while preserving readable forms, map height, and roster cards.
+   ============================================================ */
 
 @media (max-width: 1180px) {
   /* Tablet layout: collapse the main dashboard to one column. */

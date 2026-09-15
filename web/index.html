@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Document metadata, font loading, map library styles, and local dashboard CSS. -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HajjSim Agent Studio</title>
@@ -34,6 +35,7 @@
         </div>
 
         <form id="manualForm" class="stack">
+          <!-- Identity block: optional custom ID and required group assignment. -->
           <div class="grid two">
             <label>
               Pilgrim ID
@@ -45,6 +47,7 @@
             </label>
           </div>
 
+          <!-- Profile block: age and health determine vulnerability in the agent model. -->
           <div class="grid two">
             <label>
               Age
@@ -64,6 +67,7 @@
             </label>
           </div>
 
+          <!-- Culture block: nationality and language are stored in the static profile. -->
           <div class="grid two">
             <label>
               Nationality
@@ -95,6 +99,7 @@
             </label>
           </div>
 
+          <!-- Movement block: mobility and risk tolerance influence behavior decisions. -->
           <div class="grid two">
             <label>
               Mobility Index
@@ -117,6 +122,7 @@
             </label>
           </div>
 
+          <!-- Route block: starting node and first target before ritual scheduling takes over. -->
           <div class="grid two">
             <label>
               Initial Location
@@ -139,6 +145,7 @@
             </label>
           </div>
 
+          <!-- Medical block: chronic conditions and optional ritual participation. -->
           <label>
             Chronic Conditions (Ctrl/Cmd + click for multi-select)
             <select name="chronic_conditions" multiple size="5">
@@ -163,6 +170,7 @@
         <div class="divider"></div>
 
         <form id="randomForm" class="stack">
+          <!-- Random population block: requests a generated batch from the backend. -->
           <label>
             Random Agent Count
             <input type="number" name="count" min="1" max="500" value="25" required>
@@ -197,6 +205,7 @@
             <p>Advance the simulation one ritual per tick, starting from arrival in Makkah.</p>
           </div>
 
+          <!-- Pressure block: density and heat affect every agent during a tick. -->
           <div class="grid two">
             <label>
               Density (0-10)
@@ -208,6 +217,7 @@
             </label>
           </div>
 
+          <!-- Scenario block: hazard and group location shape agent perception. -->
           <div class="grid two">
             <label>
               Hazard
@@ -233,6 +243,7 @@
             </label>
           </div>
 
+          <!-- Safety block: fallback destinations for crowd avoidance and panic movement. -->
           <div class="grid two">
             <label>
               Alternate Node
@@ -253,6 +264,7 @@
             </label>
           </div>
 
+          <!-- Playback block: manual step, automatic movement, speed, and reset controls. -->
           <div class="playback-controls">
             <button class="accent-btn" type="submit">Simulate One Ritual</button>
             <button class="primary-btn" id="startSimulationButton" type="button">Start Movement</button>
@@ -294,6 +306,7 @@
         <p>Click an agent card to inspect profile, state, and memory in detail.</p>
       </div>
       <div class="roster-toolbar" aria-label="Agent roster controls">
+        <!-- Roster controls: search, filter, sort, and visible-count metadata. -->
         <label class="toolbar-field">
           Search
           <input id="rosterSearchInput" type="search" placeholder="Pilgrim ID, nationality, or group">

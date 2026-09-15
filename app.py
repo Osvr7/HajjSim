@@ -12,6 +12,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+# Agent model helpers provide all simulation behavior; this file only exposes
+# that behavior through a lightweight local HTTP API.
 from hajj_agents import (
     AgentFactory,
     build_agent_from_record,
@@ -50,10 +52,14 @@ class EnvironmentState:
 
     def apply_updates(self, payload: dict) -> None:
         """Merge user-provided environment values while keeping them bounded."""
+        # Numeric controls are clamped so browser/API input cannot push the
+        # simulation outside the range expected by the agent decision rules.
         if "density" in payload:
             self.density = max(0.0, min(10.0, float(payload["density"])))
         if "temperature" in payload:
             self.temperature = max(20.0, min(50.0, float(payload["temperature"])))
+        # Text controls choose the scenario nodes/hazards used during the next
+        # simulation step, falling back to current defaults when blank.
         if "hazard" in payload:
             self.hazard = str(payload["hazard"] or "none")
         if "group_location" in payload:
@@ -76,6 +82,8 @@ class EnvironmentState:
     def to_payload(self) -> dict:
         """Build the internal payload passed into every agent's decision loop."""
         tick_state = self._current_tick_state()
+        # The agent layer expects internal field names and a real None when no
+        # hazard is active.
         return {
             "density": self.density,
             "temperature": self.temperature,
@@ -96,6 +104,8 @@ class EnvironmentState:
     def to_dict(self) -> dict:
         """Build the JSON-safe environment object returned to the frontend."""
         tick_state = self._current_tick_state()
+        # The dashboard receives rounded values plus ritual metadata for labels,
+        # timelines, and environment controls.
         return {
             "density": round(self.density, 2),
             "temperature": round(self.temperature, 2),
@@ -134,6 +144,8 @@ class AgentRepository:
 
     def load(self) -> None:
         """Read seed pilgrim records from disk and rebuild agent objects."""
+        # If the seed data is missing, keep the server usable with an empty
+        # in-memory roster.
         if not self.data_file.exists():
             self.agents = {}
             self._next_index = 1
@@ -145,6 +157,8 @@ class AgentRepository:
         self.agents = {}
         max_index = 0
         for record in records:
+            # Each saved JSON record is converted back into the full four-layer
+            # PilgrimAgent object used by the simulation.
             agent = build_agent_from_record(record)
             self.agents[agent.profile.pilgrim_id] = agent
             digits = "".join(char for char in agent.profile.pilgrim_id if char.isdigit())
@@ -158,6 +172,7 @@ class AgentRepository:
 
     def create_manual_agent(self, payload: dict) -> dict:
         """Create one agent from the manual dashboard form."""
+        # Blank IDs are assigned the next available generated pilgrim number.
         pilgrim_id = payload.get("pilgrim_id") or f"P_{self._next_index:04d}"
         chronic_conditions = self._parse_conditions(payload.get("chronic_conditions", []))
 
@@ -188,13 +203,18 @@ class AgentRepository:
 
     def step_all(self, environment_data: dict) -> list[dict]:
         """Advance every agent once and return the action each agent selected."""
+        # Build group-location context first so every agent can decide whether
+        # it is still near the majority of its group.
         group_locations = {}
         for agent in self.agents.values():
             group_locations.setdefault(agent.profile.group_id, []).append(agent.state.current_node)
 
+        # Add shared social context to the environment without mutating the
+        # caller's original payload.
         step_environment = dict(environment_data)
         step_environment["group_locations"] = group_locations
 
+        # Run the full perceive-decide-act cycle for the active roster.
         actions = []
         for agent in self.agents.values():
             action = agent.step(step_environment)
@@ -244,6 +264,8 @@ def derive_operational_status(agent: dict) -> str:
     fatigue = float(state.get("fatigue", 0))
     hydration = float(state.get("hydration", 100))
 
+    # Panic overrides all other categories; otherwise vitals are bucketed into
+    # high-risk, support-needed, or stable dashboard states.
     if state.get("is_panicking"):
         return "panicking"
     if stress >= 88 or fatigue >= 86 or hydration <= 28:
@@ -261,6 +283,7 @@ SUMMARY_HISTORY: list[dict] = []
 
 def build_summary_snapshot() -> dict:
     """Aggregate all agents into the top-level operational dashboard metrics."""
+    # Start with counters that will become the hero summary and chart series.
     agents = REPOSITORY.list_agents()
     total = len(agents)
     stable = 0
@@ -269,6 +292,7 @@ def build_summary_snapshot() -> dict:
     panicking = 0
     location_counts = {}
 
+    # Count status buckets and current locations in one pass over the roster.
     for agent in agents:
         state = agent["state"]
         status = derive_operational_status(agent)
@@ -285,6 +309,8 @@ def build_summary_snapshot() -> dict:
         else:
             stable += 1
 
+    # Average vital signs and a weighted severity score summarize operational
+    # pressure for the dashboard graph.
     avg_stress = round(sum(agent["state"]["stress"] for agent in agents) / total, 1) if total else 0.0
     avg_fatigue = round(sum(agent["state"]["fatigue"] for agent in agents) / total, 1) if total else 0.0
     avg_hydration = round(sum(agent["state"]["hydration"] for agent in agents) / total, 1) if total else 0.0
@@ -295,6 +321,7 @@ def build_summary_snapshot() -> dict:
 
     leading_current_location = None
     if location_counts:
+        # The leading location highlights where the biggest cluster currently is.
         leading_current_location = max(location_counts.items(), key=lambda item: item[1])[0]
 
     tick_state = ENVIRONMENT.to_dict()
@@ -320,6 +347,8 @@ def update_summary_history() -> dict:
     """Store one summary point per ritual tick for the line chart."""
     summary = build_summary_snapshot()
     entry = {**summary}
+    # Replace the current tick's entry when controls change without advancing
+    # time; append only when a new ritual tick is reached.
     if SUMMARY_HISTORY and SUMMARY_HISTORY[-1]["simulation_tick"] == entry["simulation_tick"]:
         SUMMARY_HISTORY[-1] = entry
     else:
@@ -338,6 +367,7 @@ def reset_dashboard_state() -> dict:
 update_summary_history()
 
 
+# HTTP layer: routes browser requests to repository/environment operations.
 class HajjSimHandler(SimpleHTTPRequestHandler):
     """Request handler that serves both static files and JSON API routes."""
 
@@ -355,6 +385,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         """Handle dashboard reads: agents, summary, environment, or HTML files."""
         parsed = urlparse(self.path)
+        # API reads return JSON snapshots used by app.js during refresh.
         if parsed.path == "/api/agents":
             self._send_json({"agents": REPOSITORY.list_agents()})
             return
@@ -365,6 +396,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             self._send_json({"environment": ENVIRONMENT.to_dict()})
             return
         if parsed.path in ("/", "/index.html"):
+            # The root URL serves the dashboard HTML from the web directory.
             self.path = "/index.html"
         super().do_GET()
 
@@ -444,6 +476,8 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
     def _parse_body(self, raw_body: str) -> dict:
         """Read JSON or URL-encoded form bodies into a normal dictionary."""
         content_type = self.headers.get("Content-Type", "")
+        # The JavaScript client sends JSON, but URL-encoded parsing keeps the
+        # handler flexible for simple manual form/API testing.
         if "application/json" in content_type:
             return json.loads(raw_body or "{}")
         if "application/x-www-form-urlencoded" in content_type:
@@ -453,6 +487,8 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
 
     def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         """Serialize a Python dictionary as an HTTP JSON response."""
+        # JSON responses use explicit length and UTF-8 headers for browser
+        # compatibility with the static frontend.
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
