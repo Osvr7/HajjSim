@@ -112,12 +112,48 @@ never silent:
 ```
 HajjSim web app running at http://127.0.0.1:8000
 Loaded 4 variable(s) from .env
-LLM decisions ACTIVE -- provider=gemini model=gemini-1.5-flash driving=10 pilgrim(s)
+LLM decisions ACTIVE -- provider=gemini model=gemini-flash-lite-latest driving=10 pilgrim(s)
 ```
 
 The dashboard's **LLM Agent Intelligence** panel shows the same thing live, plus
 the failure count and the last API error. If you set the key after starting the
 server, `POST /api/llm/reload` re-reads it without a restart.
+
+### Getting Gemini working (three things that will bite you)
+
+**1. Send the key as a header, not a query parameter.** Google's current
+"auth keys" (prefix `AQ.`, which is what AI Studio issues now) are rejected
+with `401 UNAUTHENTICATED` if sent as `?key=` or as a bearer token. They must
+go in the `x-goog-api-key` header. `GeminiProvider` does this — it is also
+simply safer, since query strings land in proxy logs and headers do not.
+
+**2. Model names are retired regularly.** `gemini-1.5-flash` no longer exists
+and returns `404 NOT_FOUND`. Use a `-latest` alias so the config does not rot.
+To see what your key can actually use:
+
+```bash
+python -c "import json,urllib.request;from llm_decision import load_env_file,LLMSettings;load_env_file('.env');r=urllib.request.Request('https://generativelanguage.googleapis.com/v1beta/models');r.add_header('x-goog-api-key',LLMSettings.from_env().api_key);print('
+'.join(m['name'] for m in json.loads(urllib.request.urlopen(r).read())['models']))"
+```
+
+**3. The free tier is measured per minute.** One tick with 10 driven pilgrims
+is 10 requests, which blows a single-digit-per-minute allowance immediately and
+returns `429`. Set `LLM_MAX_REQUESTS_PER_MINUTE` to match your quota and keep
+`LLM_MAX_AGENTS` small; the situation cache stretches the budget further.
+
+A working free-tier `.env`:
+
+```ini
+LLM_API_KEY=your-key-here
+LLM_PROVIDER=gemini
+LLM_MODEL=gemini-flash-lite-latest
+LLM_MAX_AGENTS=3
+LLM_MAX_CALLS_PER_TICK=3
+LLM_MAX_REQUESTS_PER_MINUTE=4
+```
+
+`gemini-flash-lite-latest` answers in ~1s, which matters when a run makes
+thousands of small decisions.
 
 ### Which Google credential works
 
@@ -160,6 +196,7 @@ Even with a working key, these are all expected and visible in the decision log'
 | `fallback_invalid` | The model returned an unusable or out-of-set action. |
 | `fallback_budget` | `LLM_MAX_CALLS_PER_TICK` was reached this tick. |
 | `fallback_circuit_open` | The provider failed repeatedly, so calls are paused (see below). |
+| `fallback_rate_limit` | `LLM_MAX_REQUESTS_PER_MINUTE` is spent for this minute. |
 | `rule_based` | The pilgrim is not in the `LLM_MAX_AGENTS` sample, or is locked in transit (no real choice, so no call is made). |
 
 ### Configuring the LLM
@@ -168,7 +205,7 @@ Even with a working key, these are all expected and visible in the decision log'
 | --- | --- | --- |
 | `LLM_API_KEY` | _(none)_ | **Required.** Your key/token. `GEMINI_API_KEY` is accepted as a fallback. |
 | `LLM_PROVIDER` | `gemini` | `gemini`, `openai`, `anthropic`, or `echo` (offline test — no key, no network). |
-| `LLM_MODEL` | per provider | e.g. `gemini-1.5-flash`, `gpt-4o-mini`, `claude-haiku-4-5-20251001`. |
+| `LLM_MODEL` | per provider | e.g. `gemini-flash-lite-latest`, `gpt-4o-mini`, `claude-haiku-4-5-20251001`. |
 | `LLM_BASE_URL` | _(vendor)_ | Override for a self-hosted or proxied endpoint. |
 | `LLM_ENABLED` | `1` | Set to `0` to run the original rule-based agents. |
 | `LLM_MAX_AGENTS` | `10` | How many pilgrims the model drives. `0` = the entire roster. |
@@ -178,6 +215,7 @@ Even with a working key, these are all expected and visible in the decision log'
 | `LLM_MAX_RETRIES` | `1` | Retries before falling back. Only applied to retryable errors (429, 5xx, network) — a 401 or a bad model name is never retried. |
 | `LLM_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures before the engine stops calling the provider. `0` disables. |
 | `LLM_CIRCUIT_COOLDOWN_SECONDS` | `60` | How long calls stay paused before one probe is retried. |
+| `LLM_MAX_REQUESTS_PER_MINUTE` | `0` | Requests/minute ceiling, to stay inside a free tier. `0` = unlimited. |
 | `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
 
 > **Cost note.** A full run is ~240 ticks. With `LLM_MAX_AGENTS=0` and a large

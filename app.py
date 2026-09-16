@@ -37,6 +37,7 @@ from analysis_report import build_simulation_report, render_markdown, write_repo
 from hajj_units import (
     ConvoyDispatchCoordinator,
     HamlahRegistry,
+    
     HotelRegistry,
     OperationalUnit,
     UnitFactory,

@@ -1652,6 +1652,8 @@ function renderLlmStatus(status) {
     <span class="llm-stat">API calls: <strong>${stats.calls_succeeded || 0}</strong> ok,
       ${stats.calls_failed || 0} failed, ${stats.cache_hits || 0} cached, ${stats.budget_skips || 0} over budget${
         stats.circuit_skips ? `, ${stats.circuit_skips} skipped while paused` : ""
+      }${
+        stats.rate_limit_skips ? `, ${stats.rate_limit_skips} rate-limited` : ""
       }</span>
     <span class="llm-stat">Avg latency: <strong>${status.avg_latency_ms || 0} ms</strong></span>
     ${status.last_error ? `<span class="llm-stat llm-error">Last error: ${status.last_error}</span>` : ""}
@@ -1850,7 +1852,8 @@ function describeDecisionSource(source) {
     fallback_error: "Rule-based fallback (API call failed)",
     fallback_invalid: "Rule-based fallback (model returned an invalid action)",
     fallback_budget: "Rule-based fallback (per-tick LLM budget reached)",
-    fallback_circuit_open: "Rule-based fallback (LLM calls paused after repeated failures)"
+    fallback_circuit_open: "Rule-based fallback (LLM calls paused after repeated failures)",
+    fallback_rate_limit: "Rule-based fallback (per-minute LLM request budget spent)"
   }[source] || source || "Rule-based engine";
 }
 

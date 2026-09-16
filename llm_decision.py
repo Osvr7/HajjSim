@@ -118,7 +118,7 @@ class LLMSettings:
     # --- credentials / model selection -------------------------------------
     api_key: str = ""
     provider: str = "gemini"
-    model: str = "gemini-1.5-flash"
+    model: str = "gemini-flash-lite-latest"
     base_url: str = ""
 
     # --- behavior ----------------------------------------------------------
@@ -148,13 +148,21 @@ class LLMSettings:
     circuit_failure_threshold: int = 5
     circuit_cooldown_seconds: float = 60.0
 
+    # --- rate limiting ------------------------------------------------------
+    # Provider free tiers are measured in requests per MINUTE (Gemini's free
+    # flash tier is single digits). One tick can easily ask for more than that,
+    # so without pacing the run just collects 429s. When the minute's budget is
+    # spent the engine serves the rule-based decision instantly instead of
+    # making a call it knows will be rejected. 0 = unlimited.
+    max_requests_per_minute: int = 0
+
     @classmethod
     def from_env(cls) -> "LLMSettings":
         """Build settings from environment variables (see README)."""
         provider = (os.environ.get("LLM_PROVIDER") or "gemini").strip().lower()
         default_models = {
-            "gemini": "gemini-1.5-flash",
-            "google": "gemini-1.5-flash",
+            "gemini": "gemini-flash-lite-latest",
+            "google": "gemini-flash-lite-latest",
             "openai": "gpt-4o-mini",
             "openai_compatible": "gpt-4o-mini",
             "anthropic": "claude-haiku-4-5-20251001",
@@ -179,6 +187,7 @@ class LLMSettings:
             cache_enabled=_env_flag("LLM_CACHE_ENABLED", True),
             circuit_failure_threshold=_env_int("LLM_CIRCUIT_FAILURE_THRESHOLD", 5),
             circuit_cooldown_seconds=_env_float("LLM_CIRCUIT_COOLDOWN_SECONDS", 60.0),
+            max_requests_per_minute=_env_int("LLM_MAX_REQUESTS_PER_MINUTE", 0),
         )
 
     def is_configured(self) -> bool:
@@ -203,6 +212,7 @@ class LLMSettings:
             "timeout_seconds": self.timeout_seconds,
             "circuit_failure_threshold": self.circuit_failure_threshold,
             "circuit_cooldown_seconds": self.circuit_cooldown_seconds,
+            "max_requests_per_minute": self.max_requests_per_minute,
         }
 
 
@@ -213,7 +223,11 @@ class LLMSettings:
 # HTTP statuses where trying again might genuinely work. Everything else is a
 # permanent error (bad key, wrong model name, malformed request): retrying it
 # just doubles the cost and the delay for a guaranteed second failure.
-RETRYABLE_HTTP_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+# NOTE: 429 is deliberately NOT here. A quota error will not clear in the
+# fraction of a second an inline retry takes, and retrying spends another
+# request against the very quota that is exhausted. Pacing is the RPM
+# limiter's job instead.
+RETRYABLE_HTTP_STATUSES = frozenset({408, 409, 425, 500, 502, 503, 504})
 
 
 class LLMProviderError(RuntimeError):
@@ -282,14 +296,15 @@ class GeminiProvider(BaseLLMProvider):
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         base = self.settings.base_url or "https://generativelanguage.googleapis.com/v1beta"
         url = f"{base}/models/{self.settings.model}:generateContent"
-        headers: Dict[str, str] = {}
-        # Google issues two credential shapes: long-lived API keys (they start
-        # with "AIza" and go in the query string) and OAuth access tokens
-        # (everything else -- those must be sent as a bearer token instead).
-        if self.settings.api_key.startswith("AIza"):
-            url = f"{url}?key={self.settings.api_key}"
-        else:
-            headers["Authorization"] = f"Bearer {self.settings.api_key}"
+        # Google's documented way to authenticate is the x-goog-api-key header,
+        # and it is the ONLY thing that works for the current "auth key" format
+        # (prefix "AQ.") that AI Studio now issues. The older "?key=" query
+        # parameter is legacy, and sending an AQ. key as a bearer token is
+        # rejected with 401 ACCESS_TOKEN_TYPE_UNSUPPORTED -- Google reads it as
+        # an OAuth access token, which it is not.
+        # Keeping the key out of the URL is also simply safer: query strings
+        # end up in proxy logs and browser history, headers do not.
+        headers: Dict[str, str] = {"x-goog-api-key": self.settings.api_key}
 
         payload = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -587,6 +602,8 @@ class LLMDecisionEngine:
         # circuit may next be probed.
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
+        # Timestamps of calls made in the last 60s, for the RPM limiter.
+        self._recent_call_times: list = []
         self.stats: Dict[str, int] = {
             "calls_attempted": 0,
             "calls_succeeded": 0,
@@ -596,6 +613,7 @@ class LLMDecisionEngine:
             "invalid_responses": 0,
             "circuit_trips": 0,
             "circuit_skips": 0,
+            "rate_limit_skips": 0,
             "total_latency_ms": 0,
             "decisions_total": 0,
             "decisions_from_llm": 0,
@@ -618,6 +636,7 @@ class LLMDecisionEngine:
             self._current_tick = -1
             self._consecutive_failures = 0
             self._circuit_open_until = 0.0
+            self._recent_call_times.clear()
             for key in self.stats:
                 self.stats[key] = 0
             self.last_error = ""
@@ -643,6 +662,8 @@ class LLMDecisionEngine:
         with self._lock:
             stats = dict(self.stats)
             circuit_retry_in = max(0.0, self._circuit_open_until - time.monotonic())
+            cutoff = time.monotonic() - 60.0
+            requests_last_minute = len([t for t in self._recent_call_times if t > cutoff])
         circuit_open = circuit_retry_in > 0
         succeeded = max(1, stats["calls_succeeded"])
         return {
@@ -654,6 +675,7 @@ class LLMDecisionEngine:
             "last_error": self.last_error,
             "circuit_open": circuit_open,
             "circuit_retry_in_seconds": round(circuit_retry_in, 1),
+            "requests_last_minute": requests_last_minute,
         }
 
     # -- the main entry point ----------------------------------------------
@@ -743,6 +765,32 @@ class LLMDecisionEngine:
                 model=self.settings.model,
             ))
 
+        # Per-minute budget: provider free tiers are measured in requests per
+        # minute, and one tick can ask for more than a whole minute's worth.
+        # Spending the call anyway just collects a 429.
+        if self.settings.max_requests_per_minute > 0:
+            now = time.monotonic()
+            with self._lock:
+                cutoff = now - 60.0
+                self._recent_call_times = [t for t in self._recent_call_times if t > cutoff]
+                rate_limited = len(self._recent_call_times) >= self.settings.max_requests_per_minute
+                if rate_limited:
+                    self.stats["rate_limit_skips"] += 1
+                    wait_for = max(0.0, 60.0 - (now - self._recent_call_times[0]))
+            if rate_limited:
+                return _record(LLMDecision(
+                    action=safe_fallback,
+                    reason=(
+                        f"Per-minute LLM request budget "
+                        f"({self.settings.max_requests_per_minute}/min) is spent; used the rule-based "
+                        f"decision. Budget frees up in {wait_for:.0f}s."
+                    ),
+                    source="fallback_rate_limit",
+                    fallback_action=safe_fallback,
+                    provider=self.settings.provider,
+                    model=self.settings.model,
+                ))
+
         # Per-tick budget: protects a long run from an unbounded API bill.
         with self._lock:
             if self.settings.max_calls_per_tick > 0 and self._calls_this_tick >= self.settings.max_calls_per_tick:
@@ -760,6 +808,10 @@ class LLMDecisionEngine:
                 provider=self.settings.provider,
                 model=self.settings.model,
             ))
+
+        if self.settings.max_requests_per_minute > 0:
+            with self._lock:
+                self._recent_call_times.append(time.monotonic())
 
         prompts = build_decision_prompt(environment_state, available_actions)
         raw_text = ""
