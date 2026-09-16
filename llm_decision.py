@@ -138,6 +138,16 @@ class LLMSettings:
     max_calls_per_tick: int = 40
     cache_enabled: bool = True
 
+    # --- circuit breaker ----------------------------------------------------
+    # When a provider is definitively broken (bad key, wrong model, outage)
+    # every agent every tick would otherwise pay full network latency for a
+    # guaranteed failure, which is what makes a run appear to freeze. After
+    # this many consecutive failures the engine stops calling out entirely and
+    # serves the rule-based fallback instantly, retrying one probe call after
+    # the cooldown. 0 disables the breaker.
+    circuit_failure_threshold: int = 5
+    circuit_cooldown_seconds: float = 60.0
+
     @classmethod
     def from_env(cls) -> "LLMSettings":
         """Build settings from environment variables (see README)."""
@@ -167,6 +177,8 @@ class LLMSettings:
             max_agents=_env_int("LLM_MAX_AGENTS", 10),
             max_calls_per_tick=_env_int("LLM_MAX_CALLS_PER_TICK", 40),
             cache_enabled=_env_flag("LLM_CACHE_ENABLED", True),
+            circuit_failure_threshold=_env_int("LLM_CIRCUIT_FAILURE_THRESHOLD", 5),
+            circuit_cooldown_seconds=_env_float("LLM_CIRCUIT_COOLDOWN_SECONDS", 60.0),
         )
 
     def is_configured(self) -> bool:
@@ -189,6 +201,8 @@ class LLMSettings:
             "max_calls_per_tick": self.max_calls_per_tick,
             "cache_enabled": self.cache_enabled,
             "timeout_seconds": self.timeout_seconds,
+            "circuit_failure_threshold": self.circuit_failure_threshold,
+            "circuit_cooldown_seconds": self.circuit_cooldown_seconds,
         }
 
 
@@ -196,8 +210,23 @@ class LLMSettings:
 # 2) Providers -- one small class per model vendor
 # ============================================================
 
+# HTTP statuses where trying again might genuinely work. Everything else is a
+# permanent error (bad key, wrong model name, malformed request): retrying it
+# just doubles the cost and the delay for a guaranteed second failure.
+RETRYABLE_HTTP_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+
 class LLMProviderError(RuntimeError):
-    """Raised when a provider cannot return usable text."""
+    """Raised when a provider cannot return usable text.
+
+    ``retryable`` tells the engine whether a second attempt is worth making.
+    A 401 is not: the key will still be wrong a moment later.
+    """
+
+    def __init__(self, message: str, status_code: Optional[int] = None, retryable: bool = True):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
 
 
 class BaseLLMProvider:
@@ -229,11 +258,20 @@ class BaseLLMProvider:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")[:400]
-            raise LLMProviderError(f"HTTP {error.code} from {self.name}: {detail}") from error
+            raise LLMProviderError(
+                f"HTTP {error.code} from {self.name}: {detail}",
+                status_code=error.code,
+                retryable=error.code in RETRYABLE_HTTP_STATUSES,
+            ) from error
         except urllib.error.URLError as error:
-            raise LLMProviderError(f"Network error calling {self.name}: {error.reason}") from error
+            # Network blips and timeouts are exactly what retries are for.
+            raise LLMProviderError(
+                f"Network error calling {self.name}: {error.reason}", retryable=True
+            ) from error
         except json.JSONDecodeError as error:
-            raise LLMProviderError(f"{self.name} returned a non-JSON payload") from error
+            raise LLMProviderError(
+                f"{self.name} returned a non-JSON payload", retryable=False
+            ) from error
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -545,6 +583,10 @@ class LLMDecisionEngine:
         self._cache: Dict[str, ParsedDecision] = {}
         self._calls_this_tick = 0
         self._current_tick = -1
+        # Circuit breaker state: consecutive failures, and the timestamp the
+        # circuit may next be probed.
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
         self.stats: Dict[str, int] = {
             "calls_attempted": 0,
             "calls_succeeded": 0,
@@ -552,6 +594,8 @@ class LLMDecisionEngine:
             "cache_hits": 0,
             "budget_skips": 0,
             "invalid_responses": 0,
+            "circuit_trips": 0,
+            "circuit_skips": 0,
             "total_latency_ms": 0,
             "decisions_total": 0,
             "decisions_from_llm": 0,
@@ -572,6 +616,8 @@ class LLMDecisionEngine:
             self._cache.clear()
             self._calls_this_tick = 0
             self._current_tick = -1
+            self._consecutive_failures = 0
+            self._circuit_open_until = 0.0
             for key in self.stats:
                 self.stats[key] = 0
             self.last_error = ""
@@ -582,6 +628,10 @@ class LLMDecisionEngine:
             self.settings = LLMSettings.from_env()
             self.provider = build_provider(self.settings)
             self._cache.clear()
+            # A reload usually means the operator just fixed the key, so give
+            # the new configuration a clean circuit.
+            self._consecutive_failures = 0
+            self._circuit_open_until = 0.0
 
     @property
     def is_active(self) -> bool:
@@ -592,6 +642,8 @@ class LLMDecisionEngine:
         """Configuration + live counters for the dashboard status endpoint."""
         with self._lock:
             stats = dict(self.stats)
+            circuit_retry_in = max(0.0, self._circuit_open_until - time.monotonic())
+        circuit_open = circuit_retry_in > 0
         succeeded = max(1, stats["calls_succeeded"])
         return {
             **self.settings.to_status_payload(),
@@ -600,6 +652,8 @@ class LLMDecisionEngine:
             "stats": stats,
             "avg_latency_ms": round(stats["total_latency_ms"] / succeeded, 1) if stats["calls_succeeded"] else 0.0,
             "last_error": self.last_error,
+            "circuit_open": circuit_open,
+            "circuit_retry_in_seconds": round(circuit_retry_in, 1),
         }
 
     # -- the main entry point ----------------------------------------------
@@ -666,6 +720,29 @@ class LLMDecisionEngine:
                     cached=True,
                 ))
 
+        # Circuit breaker: if the provider has failed repeatedly, do not pay
+        # network latency for a call that is almost certainly going to fail
+        # again. This is what keeps a run moving at full speed when the key is
+        # wrong, instead of every tick stalling on timeouts.
+        with self._lock:
+            circuit_open = self._circuit_open_until > time.monotonic()
+            opens_in = max(0.0, self._circuit_open_until - time.monotonic())
+            if circuit_open:
+                self.stats["circuit_skips"] += 1
+        if circuit_open:
+            return _record(LLMDecision(
+                action=safe_fallback,
+                reason=(
+                    "LLM calls are paused after repeated failures; using the rule-based decision. "
+                    f"Retrying in {opens_in:.0f}s."
+                ),
+                source="fallback_circuit_open",
+                fallback_action=safe_fallback,
+                error=self.last_error,
+                provider=self.settings.provider,
+                model=self.settings.model,
+            ))
+
         # Per-tick budget: protects a long run from an unbounded API bill.
         with self._lock:
             if self.settings.max_calls_per_tick > 0 and self._calls_this_tick >= self.settings.max_calls_per_tick:
@@ -691,22 +768,36 @@ class LLMDecisionEngine:
         for attempt in range(max(1, self.settings.max_retries + 1)):
             with self._lock:
                 self.stats["calls_attempted"] += 1
+            retryable = True
             try:
                 raw_text = self.provider.complete(prompts["system"], prompts["user"])
                 error_text = ""
                 break
             except LLMProviderError as error:
                 error_text = str(error)
+                retryable = error.retryable
             except Exception as error:  # noqa: BLE001 -- the simulation must continue regardless
                 error_text = f"unexpected {type(error).__name__}: {error}"
+                retryable = False
             with self._lock:
                 self.stats["calls_failed"] += 1
+            # A bad key or a wrong model name will fail identically on the
+            # second attempt, so do not pay for it (or for the backoff sleep).
+            if not retryable:
+                break
             if attempt < self.settings.max_retries:
                 time.sleep(0.4 * (attempt + 1))
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         if error_text:
             self.last_error = error_text
+            tripped = self._register_failure()
+            if tripped:
+                print(
+                    f"LLM circuit breaker OPEN after {self.settings.circuit_failure_threshold} consecutive "
+                    f"failures -- pausing calls for {self.settings.circuit_cooldown_seconds:.0f}s. "
+                    f"Last error: {error_text[:200]}"
+                )
             return _record(LLMDecision(
                 action=safe_fallback,
                 reason="LLM call failed; used the rule-based safety decision instead.",
@@ -721,6 +812,9 @@ class LLMDecisionEngine:
         with self._lock:
             self.stats["calls_succeeded"] += 1
             self.stats["total_latency_ms"] += latency_ms
+            # A good call clears the breaker entirely.
+            self._consecutive_failures = 0
+            self._circuit_open_until = 0.0
 
         parsed = parse_llm_decision(raw_text, action_values)
         if parsed.action is None:
@@ -756,6 +850,24 @@ class LLMDecisionEngine:
             model=self.settings.model,
             raw_response=raw_text[:500],
         ))
+
+    def _register_failure(self) -> bool:
+        """Count a failure and open the circuit once the threshold is crossed.
+
+        Returns True only on the transition into the open state, so the caller
+        logs it once rather than on every subsequent failure.
+        """
+        threshold = self.settings.circuit_failure_threshold
+        if threshold <= 0:
+            return False
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= threshold and self._circuit_open_until <= time.monotonic():
+                self._circuit_open_until = time.monotonic() + self.settings.circuit_cooldown_seconds
+                self._consecutive_failures = 0
+                self.stats["circuit_trips"] += 1
+                return True
+        return False
 
     @staticmethod
     def _cache_key(environment_state: dict, action_values: Sequence[str]) -> str:

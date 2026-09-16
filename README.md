@@ -127,6 +127,25 @@ token instead, but is generally **not** accepted by the Generative Language API
 and returns `HTTP 401 UNAUTHENTICATED`. If every decision shows
 `fallback_error`, check `last_error` in the status panel first.
 
+### If the provider breaks, the run keeps moving
+
+A failing provider used to be the worst case for *speed*: every pilgrim, every
+tick, paid full network latency for a call that was going to fail anyway, which
+made a run look frozen. Two things prevent that now:
+
+* **Permanent errors are not retried.** A 401, a wrong model name or a malformed
+  request will fail identically on a second attempt, so only genuinely
+  retryable errors (429, 5xx, network/timeout) are retried.
+* **A circuit breaker.** After `LLM_CIRCUIT_FAILURE_THRESHOLD` consecutive
+  failures the engine stops calling out entirely and serves the rule-based
+  decision instantly, re-probing once after the cooldown. One successful call
+  closes it again.
+
+Measured with a deliberately invalid key: steps went from ~4-5s each,
+indefinitely, to 2.0s → 1.1s → **0.004s** once the breaker opened. The dashboard
+shows an amber *"Calls paused after repeated failures"* badge while this is
+happening, so a paused run is never mistaken for a broken one.
+
 ### Why a decision can still be rule-based
 
 Even with a working key, these are all expected and visible in the decision log's
@@ -140,6 +159,7 @@ Even with a working key, these are all expected and visible in the decision log'
 | `fallback_error` | The API call failed — see `last_error`. |
 | `fallback_invalid` | The model returned an unusable or out-of-set action. |
 | `fallback_budget` | `LLM_MAX_CALLS_PER_TICK` was reached this tick. |
+| `fallback_circuit_open` | The provider failed repeatedly, so calls are paused (see below). |
 | `rule_based` | The pilgrim is not in the `LLM_MAX_AGENTS` sample, or is locked in transit (no real choice, so no call is made). |
 
 ### Configuring the LLM
@@ -155,7 +175,9 @@ Even with a working key, these are all expected and visible in the decision log'
 | `LLM_MAX_CALLS_PER_TICK` | `40` | Hard ceiling on live API calls per tick. `0` = unlimited. |
 | `LLM_CACHE_ENABLED` | `1` | Reuse one answer across near-identical situations. |
 | `LLM_TIMEOUT_SECONDS` | `12` | Per-call timeout. |
-| `LLM_MAX_RETRIES` | `1` | Retries before falling back to the rule-based action. |
+| `LLM_MAX_RETRIES` | `1` | Retries before falling back. Only applied to retryable errors (429, 5xx, network) — a 401 or a bad model name is never retried. |
+| `LLM_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures before the engine stops calling the provider. `0` disables. |
+| `LLM_CIRCUIT_COOLDOWN_SECONDS` | `60` | How long calls stay paused before one probe is retried. |
 | `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
 
 > **Cost note.** A full run is ~240 ticks. With `LLM_MAX_AGENTS=0` and a large

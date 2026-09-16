@@ -1415,3 +1415,9 @@ button:hover {
   background: rgba(45, 92, 68, 0.1);
   font-size: 0.78rem;
 }
+
+.llm-badge-paused {
+  color: #7a3f12;
+  background: rgba(214, 142, 42, 0.18);
+  border: 1px solid rgba(214, 142, 42, 0.42);
+}

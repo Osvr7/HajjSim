@@ -1635,13 +1635,24 @@ function renderLlmStatus(status) {
       } (agents fall back to rule-based decisions)</span>`;
 
   const driven = status.max_agents === 0 ? "all pilgrims" : `${status.max_agents} pilgrim(s)`;
+
+  // When the provider keeps failing the engine stops calling it, so the run
+  // keeps moving. Say so explicitly -- otherwise "0 model / N fallback" with a
+  // stale error looks like the feature is simply broken.
+  const circuitBadge = status.circuit_open
+    ? `<span class="llm-badge llm-badge-paused">Calls paused after repeated failures — retrying in ${Math.ceil(status.circuit_retry_in_seconds)}s</span>`
+    : "";
+
   llmStatusBar.innerHTML = `
     ${stateBadge}
+    ${circuitBadge}
     <span class="llm-stat">Driving: <strong>${driven}</strong></span>
     <span class="llm-stat">Decisions: <strong>${stats.decisions_total || 0}</strong>
       (${stats.decisions_from_llm || 0} model / ${stats.decisions_from_fallback || 0} fallback)</span>
     <span class="llm-stat">API calls: <strong>${stats.calls_succeeded || 0}</strong> ok,
-      ${stats.calls_failed || 0} failed, ${stats.cache_hits || 0} cached, ${stats.budget_skips || 0} over budget</span>
+      ${stats.calls_failed || 0} failed, ${stats.cache_hits || 0} cached, ${stats.budget_skips || 0} over budget${
+        stats.circuit_skips ? `, ${stats.circuit_skips} skipped while paused` : ""
+      }</span>
     <span class="llm-stat">Avg latency: <strong>${status.avg_latency_ms || 0} ms</strong></span>
     ${status.last_error ? `<span class="llm-stat llm-error">Last error: ${status.last_error}</span>` : ""}
   `;
@@ -1838,7 +1849,8 @@ function describeDecisionSource(source) {
     disabled: "Rule-based engine (LLM not configured)",
     fallback_error: "Rule-based fallback (API call failed)",
     fallback_invalid: "Rule-based fallback (model returned an invalid action)",
-    fallback_budget: "Rule-based fallback (per-tick LLM budget reached)"
+    fallback_budget: "Rule-based fallback (per-tick LLM budget reached)",
+    fallback_circuit_open: "Rule-based fallback (LLM calls paused after repeated failures)"
   }[source] || source || "Rule-based engine";
 }
 
