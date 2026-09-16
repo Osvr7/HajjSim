@@ -6,6 +6,7 @@ environment, advance the simulation, and read operational metrics.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
@@ -1237,10 +1238,41 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def warn_if_key_in_template() -> bool:
+    """Shout if a real-looking key has been put in the COMMITTED .env.example.
+
+    .env.example is a documentation template that ships in the repository, so a
+    key placed there gets published the moment anyone pushes. .env is the
+    git-ignored file that is actually read. These two are easy to confuse, and
+    the mistake is silent until it is public -- so check for it out loud on
+    every boot.
+    """
+    template = BASE_DIR / ".env.example"
+    if not template.is_file():
+        return False
+    key_shapes = re.compile(r"AIza[0-9A-Za-z_-]{30,}|AQ\.[0-9A-Za-z_-]{30,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z]{32,}")
+    try:
+        contents = template.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if not key_shapes.search(contents):
+        return False
+    print("")
+    print("!" * 74)
+    print("!! WARNING: .env.example appears to contain a REAL API key.")
+    print("!! .env.example is COMMITTED to the repository -- pushing it publishes")
+    print("!! the key. Move it to .env (git-ignored) and restore the placeholder:")
+    print("!!     LLM_API_KEY=paste-your-key-here")
+    print("!" * 74)
+    print("")
+    return True
+
+
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Start the threaded local web server used during demos/development."""
     server = ThreadingHTTPServer((host, port), HajjSimHandler)
     print(f"HajjSim web app running at http://{host}:{port}")
+    warn_if_key_in_template()
     # Startup diagnostics for the decision layer -- names only, never values.
     if _LOADED_ENV_VARS:
         print(f"Loaded {_LOADED_ENV_VARS} variable(s) from {ENV_FILE.name}")
