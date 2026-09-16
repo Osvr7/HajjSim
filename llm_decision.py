@@ -35,6 +35,55 @@ from typing import Dict, Optional, Sequence
 
 
 # ============================================================
+# 0) .env loading
+# ------------------------------------------------------------
+# Putting the key in a ".env" file is what everyone expects to work, so the
+# app loads it. Kept dependency-free (no python-dotenv) and deliberately
+# non-overriding: a variable already exported in the real environment always
+# wins, so a CI/production value is never silently replaced by a dev file.
+# ============================================================
+
+def load_env_file(path) -> int:
+    """Load ``KEY=VALUE`` pairs from a .env file into ``os.environ``.
+
+    Returns how many variables were set. Missing file, unreadable file, or a
+    malformed line are all non-fatal -- configuration should never be the
+    reason the simulation fails to start.
+    """
+    from pathlib import Path
+
+    env_path = Path(path)
+    if not env_path.is_file():
+        return 0
+
+    loaded = 0
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        # "export FOO=bar" is a common shape in hand-written .env files.
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        name, _, value = line.partition("=")
+        name = name.strip()
+        value = value.strip()
+        # Strip one matching pair of surrounding quotes, if present.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if not name or name in os.environ:
+            # Never override a variable the operator exported explicitly.
+            continue
+        os.environ[name] = value
+        loaded += 1
+    return loaded
+
+
+# ============================================================
 # 1) Configuration (environment variables only -- no hard-coded keys)
 # ============================================================
 

@@ -73,8 +73,14 @@ or report.
    cp .env.example .env
    ```
 
-2. `.env` is git-ignored. The server does **not** auto-load it — it reads real
-   environment variables, so export them in the shell you launch `app.py` from.
+   `.env` is git-ignored and **`app.py` loads it automatically at startup**.
+   Nothing else is needed — `python app.py` will pick the key up.
+
+   > ⚠️ Put the key in `.env`, never in `.env.example`. The `.example` file is
+   > committed to the repository; a key placed there gets published.
+
+2. Alternatively, export the variables in your shell. An exported value always
+   takes precedence over `.env`, which is what you want for CI or a server.
 
    **Windows PowerShell**
 
@@ -100,9 +106,41 @@ or report.
    python app.py
    ```
 
-The dashboard's **LLM Agent Intelligence** panel shows whether the model is
-actually live. If you set the key after starting the server, `POST /api/llm/reload`
-re-reads the environment without a restart.
+On startup `app.py` prints exactly what it resolved, so a misconfigured key is
+never silent:
+
+```
+HajjSim web app running at http://127.0.0.1:8000
+Loaded 4 variable(s) from .env
+LLM decisions ACTIVE -- provider=gemini model=gemini-1.5-flash driving=10 pilgrim(s)
+```
+
+The dashboard's **LLM Agent Intelligence** panel shows the same thing live, plus
+the failure count and the last API error. If you set the key after starting the
+server, `POST /api/llm/reload` re-reads it without a restart.
+
+### Which Google credential works
+
+Use an **API key from Google AI Studio** — it starts with `AIza` and is sent as
+`?key=`. A short-lived OAuth access token (starting `AQ.`) is sent as a bearer
+token instead, but is generally **not** accepted by the Generative Language API
+and returns `HTTP 401 UNAUTHENTICATED`. If every decision shows
+`fallback_error`, check `last_error` in the status panel first.
+
+### Why a decision can still be rule-based
+
+Even with a working key, these are all expected and visible in the decision log's
+`source` field:
+
+| `source` | Meaning |
+| --- | --- |
+| `llm` | The model chose it. |
+| `cache` | An identical situation was already answered this run. |
+| `disabled` | No key / `LLM_ENABLED=0` / unknown provider. |
+| `fallback_error` | The API call failed — see `last_error`. |
+| `fallback_invalid` | The model returned an unusable or out-of-set action. |
+| `fallback_budget` | `LLM_MAX_CALLS_PER_TICK` was reached this tick. |
+| `rule_based` | The pilgrim is not in the `LLM_MAX_AGENTS` sample, or is locked in transit (no real choice, so no call is made). |
 
 ### Configuring the LLM
 

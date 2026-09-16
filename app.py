@@ -30,7 +30,7 @@ from hajj_agents import (
 # The LLM decision layer, its structured log, and the after-action report are
 # each self-contained modules so the model can be swapped without touching the
 # simulation or this HTTP layer.
-from llm_decision import LLMDecisionEngine, llm_decide_action
+from llm_decision import LLMDecisionEngine, llm_decide_action, load_env_file
 from simulation_log import DecisionRecord, SimulationLog, TickRecord
 from analysis_report import build_simulation_report, render_markdown, write_report
 from hajj_units import (
@@ -49,6 +49,11 @@ STATIC_DIR = BASE_DIR / "web"
 DATA_FILE = BASE_DIR / "pilgrims.json"
 HAMLAH_DATA_FILE = BASE_DIR / "hamlahs.json"
 HOTEL_DATA_FILE = BASE_DIR / "hotels.json"
+ENV_FILE = BASE_DIR / ".env"
+
+# Load .env before anything reads LLM_* settings. Variables already exported in
+# the real environment win, so this only fills in what the shell did not set.
+_LOADED_ENV_VARS = load_env_file(ENV_FILE)
 
 
 @dataclass
@@ -1236,6 +1241,21 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Start the threaded local web server used during demos/development."""
     server = ThreadingHTTPServer((host, port), HajjSimHandler)
     print(f"HajjSim web app running at http://{host}:{port}")
+    # Startup diagnostics for the decision layer -- names only, never values.
+    if _LOADED_ENV_VARS:
+        print(f"Loaded {_LOADED_ENV_VARS} variable(s) from {ENV_FILE.name}")
+    status = LLM_ENGINE.status_payload()
+    if status["active"]:
+        print(
+            f"LLM decisions ACTIVE -- provider={status['provider']} model={status['model']} "
+            f"driving={'all pilgrims' if status['max_agents'] == 0 else str(status['max_agents']) + ' pilgrim(s)'}"
+        )
+    else:
+        reason = "LLM_ENABLED is off" if not status["enabled"] else (
+            "no LLM_API_KEY found" if not status["api_key_present"] else
+            f"unknown LLM_PROVIDER {status['provider']!r}"
+        )
+        print(f"LLM decisions INACTIVE ({reason}) -- agents will use the rule-based engine")
     server.serve_forever()
 
 
