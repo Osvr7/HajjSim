@@ -1,6 +1,6 @@
 # MANSAK / HajjSim — Feature Backlog (Single Source of Truth)
 
-_Last verified against the codebase: 2026-09-16._
+_Last verified against the codebase: 2026-09-16 (bus behaviour round)._
 
 This is the canonical status list for every feature promised anywhere for this project — the README, the course pitch deck's "Future Plan" roadmap slide, the two implemented upgrade rounds, and the MiroFish-inspired adoption ideas — consolidated into one table per source. Every status below was verified by reading the actual code (not just recalled from a plan or a chat), but **it will drift the moment the code changes again without this file being refreshed.** Treat a "Done" row as a claim, not a guarantee — re-check the cited evidence (file/function names) before relying on it for something important.
 
@@ -65,6 +65,21 @@ This is the canonical status list for every feature promised anywhere for this p
 | 3b.13 | Cost / volume control | ✅ Done | `LLM_MAX_AGENTS`, `LLM_MAX_CALLS_PER_TICK`, `LLM_CACHE_ENABLED`; `refresh_llm_agent_selection()` | Necessary, not cosmetic: a 240-tick run over the full roster would otherwise mean six-figure API calls. Defaults keep a demo in the low hundreds. |
 | 3b.14 | Verified against a real paid API | ⚠️ Not verified | Gemini/OpenAI/Anthropic request shapes written from their documented REST contracts; only the offline `echo` provider has actually been run | **The same caveat as §3.10.** Every code path around the call is verified, but no live key has been used. Confirm the model name and response shape on first real run. |
 
+## 3c. Round 4 upgrade (2026-09-16) — demand-driven, route-bound buses
+
+| # | Feature | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 3c.1 | Bus will not move below a minimum rider count | ✅ Done | `MIN_RIDERS_TO_MOVE = 5`; `BusUnit.has_minimum_riders()`; `_dispatch_from_stops` | Verified at 0/1/3/4/5/6/20 riders. Replaces round 2's `MAX_IDLE_TICKS_BEFORE_EMPTY_DISPATCH`, which dispatched empty buses after 2 idle ticks. |
+| 3c.2 | Capacity is never exceeded | ✅ Done | `BusUnit.is_full` / `remaining_capacity`; boarding loop | Surplus pilgrims stay queued rather than being dropped. A 500-seat bus with 2 riders still waits — high capacity does not force movement. |
+| 3c.3 | Movement restricted to the bus's own route | ✅ Done | `BusUnit.is_valid_next_hop()`, `_depart()` refuses and logs | A fabricated segment is refused, no event is emitted, and the bus stays put. Verified over a full run: **0** off-route positions across 239 ticks. |
+| 3c.4 | Sequential route with reversal at the end | ✅ Done | `route_stops`/`route_zones`/`route_index`, `next_route_index()`, `peek_next_stop()` | A→B→C→D→C→B→A verified on a 4-stop route. Existing corridor buses are 2-stop routes, so their behaviour is unchanged. |
+| 3c.5 | Create a new route only when necessary | ✅ Done | `BusRouteRegistry.create_route_for()`, `_plan_routes_for_unmet_demand()` | Existing routes are checked first; a new route is built from the corridor graph and validated segment-by-segment. A full run generated **0** routes (all 6 corridors already served), which is the correct outcome. |
+| 3c.6 | Demand-driven movement | ✅ Done | `_collect_demand()`, `_should_reposition()` | |
+| 3c.7 | Fixed decision priority order | ✅ Done | `ConvoyDispatchCoordinator.step()` docstring + `_dispatch_from_stops` ordering | Count → capacity → route → demand → existing route → new route → valid segment. |
+| 3c.8 | Bus behaviour logging | ✅ Done | `bus_log()`, `BUS_LOG` env var | Silenceable with `BUS_LOG=0`. |
+| 3c.9 | Dashboard surface | ✅ Done | `openUnitDetailSidebar` bus branch | Riders/seats, movement state ("Holding — 2/5 riders"), minimum, full route, heading. |
+| 3c.10 | Two deliberate exceptions to the strict minimum | ⚠️ By design | `MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH`, `ALLOW_EMPTY_REPOSITIONING` | **A strict reading of "never move below the minimum" deadlocks the run.** Both exceptions are narrow, configurable and logged. Over a full run all 52 under-minimum departures were attributable to one of them; 0 unexplained. Set both to 0/False for strict enforcement — and expect stranded pilgrims. |
+
 ## 4. Official course "Future Plan" roadmap (`Documents/HajjSim_Agent_Studio_Presentation.pdf`, slide 8)
 
 This slide is the team's own stated next-stage roadmap — distinct from, and mostly not covered by, Rounds 1-2 above.
@@ -96,6 +111,7 @@ This slide is the team's own stated next-stage roadmap — distinct from, and mo
 - **Report quality depends on the model** — a full echo-provider run showed 44.8% movement efficiency and 3,286 oscillation events, but the echo provider is a fixed heuristic that always prefers a reroute. Those numbers measure the stand-in, not a real model; re-baseline them on the first live run.
 - **No aggregate Hamlah view** (§2.2) — `declared_pilgrim_count` vs `actual_pilgrim_count` is modeled but invisible to an operator.
 - **Two write-only memory fields** (`leader_id` §4.1, `known_hazards` §5.3) — data is captured every tick but never read back into any decision, making two "planned" features look implemented in the data model while doing nothing behaviorally. `learned_preferences` is similarly written in `_seed_memory` but not obviously read elsewhere — not yet fully audited.
+- **A third movement-stall bug**, same shape as the first two and found the same way (a full run, not a short one): the new empty-repositioning guard treated *any* bus parked in the target zone as coverage, including buses on unrelated routes. Buses serving Mina↔Arafat and Mina↔Muzdalifah were parked in Mina, so the Aziziyah↔Mina bus never repositioned and 18 pilgrims queued for Mina→Aziziyah were stranded. Fixed by narrowing the check to buses whose route actually contains that corridor. End-of-run stranded pilgrims: 10 → 1 (pre-change baseline was 2).
 - **Two real movement-stall bugs**, found only by running a *full* simulation to "Hajj Complete" in the browser (not caught by short test runs or unit-level checks):
   1. `ConvoyDispatchCoordinator` grouped waiting pilgrims by `(current_zone, final_target_zone)` directly; the corridor graph is a path with no edges between non-adjacent zones (e.g. Haram↔Arafat), so any multi-hop trip queued forever. Fixed with `next_hop_zone()` (BFS) in `hajj_agents.py`.
   2. A pilgrim whose ritual target changed to their *current* zone while already `AWAITING_TRANSPORT` had no way back to `PEDESTRIAN` (the coordinator skips same-zone pairs by design) and stalled permanently. Fixed in `_rule_based_decision`.

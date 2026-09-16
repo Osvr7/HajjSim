@@ -1958,11 +1958,27 @@ function openUnitDetailSidebar(unit) {
   ];
 
   if (unit.unit_type === "bus") {
-    rows.push(detailBlock("Passenger capacity", unit.passenger_capacity));
+    const riders = unit.current_riders ?? 0;
+    const minimum = unit.min_riders_to_move ?? 0;
+    // A bus is demand-driven: say plainly whether it is allowed to move yet,
+    // so an operator does not read a stationary bus as a broken one.
+    const moveState = riders >= minimum
+      ? `Ready — ${riders}/${minimum} minimum met`
+      : `Holding — ${riders}/${minimum} riders${unit.waiting_ticks ? ` (waited ${unit.waiting_ticks} tick(s))` : ""}`;
+    rows.push(detailBlock("Riders", `${riders} / ${unit.passenger_capacity} seats`));
+    rows.push(detailBlock("Movement", moveState));
+    rows.push(detailBlock("Minimum to move", minimum));
+    const stops = (unit.route_stops && unit.route_stops.length ? unit.route_stops : unit.assigned_route) || [];
     rows.push(detailBlock(
       "Route",
-      (unit.assigned_route || []).map((node) => siteGps[node]?.label || node).join(" → ")
+      stops.map((node) => siteGps[node]?.label || node).join(" → ") || "—"
     ));
+    if (unit.route_id) {
+      rows.push(detailBlock(
+        "Heading",
+        unit.direction_forward ? "Forward along route" : "Returning along route"
+      ));
+    }
   } else if (unit.unit_type === "marshal") {
     rows.push(detailBlock(
       "Patrol zone",

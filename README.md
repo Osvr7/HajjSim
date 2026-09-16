@@ -380,6 +380,70 @@ evidence that produced it · **6** Final summary.
 | `GET` | `/api/analytics/simulation-report.md` | The same report as Markdown. |
 | `POST` | `/api/analytics/simulation-report` | Build it **and** write it to `reports/`. |
 
+## 🚌 Bus Agent Behaviour
+
+Buses are **demand-driven and route-bound**. Every tick, each bus is evaluated
+in a fixed order: passenger count → capacity → a valid route exists → demand →
+use an existing route → create one only if necessary → move only along a valid
+segment.
+
+### Rules
+
+| Rule | Where |
+| --- | --- |
+| A bus will not depart below `MIN_RIDERS_TO_MOVE` (default **5**) | `hajj_units.MIN_RIDERS_TO_MOVE` |
+| A bus never boards past `passenger_capacity` (default **40**) | `BusUnit.is_full` / `remaining_capacity` |
+| A bus may only move to an **adjacent stop on its own route** | `BusUnit.is_valid_next_hop()` |
+| That stop's zone pair must be a **real corridor** in the road network | `is_real_corridor()` |
+| Routes are walked in order and **reverse at the end** (A→B→C→D→C→B→A) | `BusUnit.next_route_index()` |
+| A new route is created **only** when no existing route serves the demand | `BusRouteRegistry.create_route_for()` |
+
+High capacity never forces movement — a 500-seat bus with 2 riders still waits.
+
+### Tunables
+
+```python
+MIN_RIDERS_TO_MOVE = 5                          # minimum riders before departing
+DEFAULT_BUS_CAPACITY = 40                       # seats per bus
+MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH = 6    # 0 = enforce the minimum absolutely
+ALLOW_EMPTY_REPOSITIONING = True                # False = forbid all empty movement
+```
+
+### Two deliberate exceptions to "never move below the minimum"
+
+A strict reading of the rule deadlocks the simulation, so there are exactly two
+narrow exceptions. Both are configurable and both are logged:
+
+1. **Under-full dispatch.** A bus holding 1–4 riders for
+   `MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH` ticks departs anyway, so a small
+   group on a quiet corridor is not stranded for the rest of the run. Set to
+   `0` to enforce the minimum absolutely.
+2. **Empty repositioning.** An empty bus may move to the other end of **its own
+   route** when riders are waiting there and no bus that serves that corridor
+   is there or on the way. Without this, once every bus on a corridor ends up
+   at one end, everyone at the far end waits forever. Set
+   `ALLOW_EMPTY_REPOSITIONING = False` to forbid it.
+
+Measured over a full 239-tick run with 43 pilgrims: 52 under-minimum
+departures, **all** attributable to one of these two exceptions (22
+repositioning, 30 under-full), and **0** unexplained.
+
+### Logging
+
+```
+BUS_04: 0 riders -> staying stationary (minimum = 5)
+BUS_04: 2 riders -> staying stationary (minimum = 5), waited 3 tick(s)
+BUS_04: 10/10 capacity reached -- 15 pilgrim(s) left waiting at Jeddah_Airport
+BUS_04: 6 riders -> minimum reached, starting route (Aziziyah_Zone -> Mina_West_Gate)
+BUS_04: moving Aziziyah_Zone -> Mina_West_Gate (6/40 capacity, 2 tick(s))
+BUS_T1: REFUSED move Jeddah_Airport -> Arafat_Main_Field -- not an adjacent segment of its route
+Dispatcher: 1 pilgrim(s) need Mina -> Muzdalifah, no bus serves it -- checking existing routes
+Dispatcher: no suitable route -> creating a new valid route for Mina -> Muzdalifah
+Dispatcher: created ROUTE_GEN_01: Mina_Camps_Core -> Muzdalifah_Open_Area
+```
+
+Set `BUS_LOG=0` to silence it — a 240-tick run with a full fleet is a lot of output.
+
 ### Files added by this feature
 
 | File | Role |

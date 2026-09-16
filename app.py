@@ -1038,6 +1038,7 @@ def reset_dashboard_state() -> dict:
     DEPLOYMENT_LOG.clear()
     reset_llm_run_state()
     UNIT_REPOSITORY.spawn_default_fleet()
+    CONVOY_COORDINATOR.reset()
     SUMMARY_HISTORY.clear()
     return update_summary_history()
 
@@ -1222,6 +1223,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             ENVIRONMENT.reset()
             REPOSITORY.reset_ritual_days()
             UNIT_REPOSITORY.spawn_default_fleet()
+            CONVOY_COORDINATOR.reset()
             sync_hotel_occupancy()
             DEPLOYMENT_LOG.clear()
             reset_llm_run_state()

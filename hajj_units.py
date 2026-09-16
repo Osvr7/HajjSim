@@ -9,13 +9,14 @@ they don't need memory or a behavior engine -- just simple per-tick rules.
 
 import json
 import math
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 # One-way dependency only (hajj_agents.py never imports this module), so this
 # stays acyclic.
-from hajj_agents import corridor_ticks, next_hop_zone, zone_of
+from hajj_agents import corridor_minutes, corridor_ticks, next_hop_zone, zone_of
 
 # Successive Hamlahs (by seed order) start moving this many simulated minutes
 # apart, so campaigns dispatch in staggered waves instead of all at once.
@@ -297,6 +298,206 @@ class OperationalUnit:
         }
 
 
+# ============================================================
+# Bus routing: constants, route model, and the route registry
+# ------------------------------------------------------------
+# A bus is demand-driven and route-bound. It only moves when it is carrying
+# enough riders to be worth dispatching, it never exceeds its capacity, and
+# every hop it makes must be an adjacent pair of stops on its own route that
+# also corresponds to a real corridor in the road network.
+# ============================================================
+
+# --- Tunables (change these, not the logic) -----------------------------
+# A bus stays put until it is carrying at least this many riders.
+MIN_RIDERS_TO_MOVE = 5
+# Default seats per bus. Boarding never exceeds this.
+DEFAULT_BUS_CAPACITY = 40
+
+# A bus with fewer than MIN_RIDERS_TO_MOVE will still run if it has been
+# waiting this long AND has at least one rider, so a handful of pilgrims on a
+# quiet corridor are not stranded forever. Set to 0 to disable and enforce the
+# minimum absolutely.
+MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH = 6
+
+# An EMPTY bus may reposition to the other end of its own route only when
+# riders are waiting there and no other bus on that route can serve them.
+# This is the deadlock guard: without it, once every bus on a corridor ends up
+# at the same end, pilgrims at the far end wait forever. It is still
+# demand-driven (it only happens when there is real demand it can reach) and
+# still route-bound (it can only move along its own route). Set to False to
+# forbid all empty movement.
+ALLOW_EMPTY_REPOSITIONING = True
+
+# Canonical boarding stop for each inter-city corridor, as (zone_a, zone_b) ->
+# (stop_in_zone_a, stop_in_zone_b). This is the single source of truth for
+# where a bus may legally stop, and is what new routes are built from.
+CORRIDOR_STOPS: Dict[Tuple[str, str], Tuple[str, str]] = {
+    ("Airport", "Haram"): ("Jeddah_Airport", "Masjid_al_Haram_Perimeter"),
+    ("Haram", "Aziziyah"): ("Makkah_Bus_Station", "Aziziyah_Zone"),
+    ("Aziziyah", "Mina"): ("Aziziyah_Zone", "Mina_West_Gate"),
+    ("Mina", "Arafat"): ("Mina_Camps_Core", "Arafat_Main_Field"),
+    ("Mina", "Muzdalifah"): ("Mina_Camps_Core", "Muzdalifah_Open_Area"),
+    ("Arafat", "Muzdalifah"): ("Arafat_Main_Field", "Muzdalifah_Open_Area"),
+}
+
+# Bus decisions are logged line-by-line for traceability. Set BUS_LOG=0 to
+# silence it -- a 240-tick run with a full fleet is a lot of output.
+BUS_LOG_ENABLED = (os.environ.get("BUS_LOG") or "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def bus_log(message: str) -> None:
+    """Emit one bus-behaviour line, unless logging has been switched off."""
+    if BUS_LOG_ENABLED:
+        print(message)
+
+
+def corridor_stops_for(zone_a: str, zone_b: str) -> Optional[Tuple[str, str]]:
+    """Return the (stop_in_zone_a, stop_in_zone_b) pair for a corridor.
+
+    Handles either ordering, and returns None when no such corridor exists --
+    which is what makes an invalid route segment impossible to build.
+    """
+    direct = CORRIDOR_STOPS.get((zone_a, zone_b))
+    if direct:
+        return direct
+    reverse = CORRIDOR_STOPS.get((zone_b, zone_a))
+    if reverse:
+        return reverse[1], reverse[0]
+    return None
+
+
+def is_real_corridor(zone_a: str, zone_b: str) -> bool:
+    """True when two zones are directly connected in the road network."""
+    return corridor_minutes(zone_a, zone_b) is not None and corridor_stops_for(zone_a, zone_b) is not None
+
+
+def plan_zone_path(from_zone: str, to_zone: str) -> List[str]:
+    """Shortest sequence of zones from one to another over real corridors.
+
+    Walks ``next_hop_zone`` (the same BFS the pilgrims use), so a generated
+    route can only ever be made of segments that genuinely exist.
+    """
+    if from_zone == to_zone:
+        return []
+    path = [from_zone]
+    guard = 0
+    current = from_zone
+    while current != to_zone and guard < 12:
+        guard += 1
+        hop = next_hop_zone(current, to_zone)
+        if hop is None:
+            return []
+        path.append(hop)
+        current = hop
+    return path if current == to_zone else []
+
+
+@dataclass
+class BusRoute:
+    """An ordered list of stops a bus is allowed to travel between.
+
+    ``stops`` and ``zones`` are parallel lists: ``stops[i]`` is the boarding
+    node in ``zones[i]``. A bus walks this list one index at a time and
+    reverses at either end, so it can never appear anywhere that is not one of
+    its own stops.
+    """
+
+    route_id: str
+    stops: List[str] = field(default_factory=list)
+    zones: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.stops) != len(self.zones):
+            raise ValueError(f"Route {self.route_id}: stops and zones must be the same length")
+        if len(self.stops) < 2:
+            raise ValueError(f"Route {self.route_id}: a route needs at least two stops")
+
+    @property
+    def zone_pairs(self) -> List[Tuple[str, str]]:
+        """Every consecutive zone pair the route claims to connect."""
+        return list(zip(self.zones, self.zones[1:]))
+
+    def is_valid(self) -> bool:
+        """True only when every segment is a real corridor in the road network."""
+        return all(is_real_corridor(a, b) for a, b in self.zone_pairs)
+
+    def serves(self, from_zone: str, to_zone: str) -> bool:
+        """True when this route connects two zones as an adjacent segment."""
+        return (from_zone, to_zone) in self.zone_pairs or (to_zone, from_zone) in self.zone_pairs
+
+    def describe(self) -> str:
+        """Human-readable 'Stop A -> Stop B -> Stop C' form for logs."""
+        return " -> ".join(self.stops)
+
+    def to_payload(self) -> dict:
+        """JSON-safe form for the dashboard."""
+        return {"route_id": self.route_id, "stops": list(self.stops), "zones": list(self.zones)}
+
+
+class BusRouteRegistry:
+    """Every route the fleet serves, plus creation of new ones when needed.
+
+    New routes are a last resort: demand is only ever routed onto a freshly
+    built route when no existing route already covers it.
+    """
+
+    def __init__(self):
+        self.routes: Dict[str, BusRoute] = {}
+        self._created_count = 0
+
+    def register(self, route: BusRoute) -> BusRoute:
+        """Add a route, refusing any that is not valid in the road network."""
+        if not route.is_valid():
+            raise ValueError(f"Route {route.route_id} has a segment that is not a real corridor: {route.describe()}")
+        self.routes[route.route_id] = route
+        return route
+
+    def reset(self) -> None:
+        """Forget every route (used when the fleet is respawned)."""
+        self.routes.clear()
+        self._created_count = 0
+
+    def find_route_serving(self, from_zone: str, to_zone: str) -> Optional[BusRoute]:
+        """Return an existing route that already covers this corridor, if any."""
+        for route in self.routes.values():
+            if route.serves(from_zone, to_zone):
+                return route
+        return None
+
+    def create_route_for(self, from_zone: str, to_zone: str) -> Optional[BusRoute]:
+        """Build and register a new route for unmet demand, or None if impossible.
+
+        Every segment is taken from the corridor graph, so a generated route is
+        valid by construction; it is validated again on registration.
+        """
+        zone_path = plan_zone_path(from_zone, to_zone)
+        if len(zone_path) < 2:
+            return None
+
+        stops: List[str] = []
+        for index, (zone_a, zone_b) in enumerate(zip(zone_path, zone_path[1:])):
+            pair = corridor_stops_for(zone_a, zone_b)
+            if pair is None:
+                # A segment with no real corridor -- refuse the whole route
+                # rather than inventing a road.
+                return None
+            if index == 0:
+                stops.append(pair[0])
+            stops.append(pair[1])
+
+        self._created_count += 1
+        route = BusRoute(route_id=f"ROUTE_GEN_{self._created_count:02d}", stops=stops, zones=list(zone_path))
+        try:
+            return self.register(route)
+        except ValueError:
+            self._created_count -= 1
+            return None
+
+    def to_payload(self) -> List[dict]:
+        """JSON-safe list of all known routes."""
+        return [route.to_payload() for route in self.routes.values()]
+
+
 @dataclass
 class BusUnit(OperationalUnit):
     """A support unit that moves pilgrims between zones.
@@ -311,8 +512,20 @@ class BusUnit(OperationalUnit):
     cyclic local-loop behavior for cosmetic intra-zone flavor.
     """
 
-    passenger_capacity: int = 40
+    passenger_capacity: int = DEFAULT_BUS_CAPACITY
     is_corridor_bus: bool = True
+
+    # -- Demand-driven movement --
+    # The bus will not depart with fewer riders than this (see MIN_RIDERS_TO_MOVE).
+    min_riders_to_move: int = MIN_RIDERS_TO_MOVE
+    # How many consecutive ticks it has been holding for more riders.
+    waiting_ticks: int = 0
+
+    # -- Route (ordered stops the bus is allowed to travel between) --
+    route_id: str = ""
+    route_stops: List[str] = field(default_factory=list)
+    route_zones: List[str] = field(default_factory=list)
+    route_index: int = 0
 
     # -- Corridor bus fields (ConvoyDispatchCoordinator-owned) --
     corridor_zone_a: str = ""
@@ -331,6 +544,99 @@ class BusUnit(OperationalUnit):
     # -- Legacy local-loop fields (BUS_LOCAL only) --
     assigned_route: List[str] = field(default_factory=list)
     route_position: int = 0
+
+    # ------------------------------------------------------------------
+    # Riders and capacity
+    # ------------------------------------------------------------------
+    @property
+    def current_riders(self) -> int:
+        """How many pilgrims are on board right now."""
+        return len(self.manifest)
+
+    @property
+    def remaining_capacity(self) -> int:
+        """Free seats. Never negative, even if data were somehow inconsistent."""
+        return max(0, self.passenger_capacity - self.current_riders)
+
+    @property
+    def is_full(self) -> bool:
+        """True when no further rider can be accepted."""
+        return self.remaining_capacity <= 0
+
+    def has_minimum_riders(self) -> bool:
+        """True when the bus is carrying enough riders to be worth dispatching."""
+        return self.current_riders >= self.min_riders_to_move
+
+    # ------------------------------------------------------------------
+    # Route
+    # ------------------------------------------------------------------
+    def current_zone(self) -> str:
+        """The zone of the stop the bus is currently at."""
+        if self.route_zones and 0 <= self.route_index < len(self.route_zones):
+            return self.route_zones[self.route_index]
+        return zone_of(self.current_node)
+
+    def next_route_index(self) -> Optional[int]:
+        """Index of the next stop, reversing at either end of the route.
+
+        Returns None only for a degenerate route with fewer than two stops,
+        which means the bus has nowhere legal to go.
+        """
+        if len(self.route_stops) < 2:
+            return None
+        if self.direction_forward:
+            if self.route_index + 1 < len(self.route_stops):
+                return self.route_index + 1
+            # End of the line: turn around (Stop D -> Stop C -> ... -> Stop A).
+            self.direction_forward = False
+            return self.route_index - 1
+        if self.route_index - 1 >= 0:
+            return self.route_index - 1
+        self.direction_forward = True
+        return self.route_index + 1
+
+    def peek_next_stop(self) -> Optional[Tuple[int, str, str]]:
+        """Look at the next (index, stop_node, zone) WITHOUT flipping direction.
+
+        next_route_index() mutates direction_forward when it turns around, so
+        anything that only wants to *ask* where the bus would go next -- a
+        capacity check, a log line, a demand lookup -- must use this instead.
+        """
+        if len(self.route_stops) < 2:
+            return None
+        forward = self.direction_forward
+        index = self.route_index + 1 if forward else self.route_index - 1
+        if index >= len(self.route_stops):
+            index = self.route_index - 1
+        elif index < 0:
+            index = self.route_index + 1
+        if not 0 <= index < len(self.route_stops):
+            return None
+        return index, self.route_stops[index], self.route_zones[index]
+
+    def is_valid_next_hop(self, to_node: str) -> bool:
+        """True only if to_node is an ADJACENT stop on this bus's own route.
+
+        This is the guard that makes shortcuts, teleports and jumps onto an
+        unrelated route impossible: a destination that is not the immediate
+        neighbour of the current position in route_stops is refused, and so is
+        one whose zone pair is not a real corridor.
+        """
+        if to_node not in self.route_stops:
+            return False
+        neighbours = []
+        if self.route_index - 1 >= 0:
+            neighbours.append(self.route_index - 1)
+        if self.route_index + 1 < len(self.route_stops):
+            neighbours.append(self.route_index + 1)
+        for index in neighbours:
+            if self.route_stops[index] == to_node:
+                return is_real_corridor(self.route_zones[self.route_index], self.route_zones[index])
+        return False
+
+    def route_description(self) -> str:
+        """'Stop A -> Stop B -> Stop C' for logging."""
+        return " -> ".join(self.route_stops) if self.route_stops else "(no route)"
 
     def step(self, environment_data: dict, pilgrim_snapshots: List[dict]) -> str:
         if self.is_corridor_bus:
@@ -370,30 +676,77 @@ class BusUnit(OperationalUnit):
             "transit_progress": round(self.transit_progress, 3),
             "assigned_route": list(self.assigned_route),
             "route_position": self.route_position,
+            "current_riders": self.current_riders,
+            "remaining_capacity": self.remaining_capacity,
+            "min_riders_to_move": self.min_riders_to_move,
+            "waiting_ticks": self.waiting_ticks,
+            "route_id": self.route_id,
+            "route_stops": list(self.route_stops),
+            "route_zones": list(self.route_zones),
+            "route_index": self.route_index,
+            "direction_forward": self.direction_forward,
         })
         return payload
 
 
 class ConvoyDispatchCoordinator:
-    """Owns all real corridor-bus movement: arrival/disembark, then boarding.
+    """Owns all real corridor-bus movement: arrival/disembark, then dispatch.
 
     Runs once per tick, after pilgrims have decided their own actions (so it
     sees freshly-set AWAITING_TRANSPORT states) and before marshal/police/
     ambulance stepping (so, e.g., an ambulance doesn't try to reach a pilgrim
     who just boarded a bus this same tick).
+
+    Every bus is evaluated in this fixed order:
+
+        1. current passenger count
+        2. bus capacity
+        3. a valid route exists
+        4. passenger destinations / demand
+        5. use an existing route if possible
+        6. create a new route only if necessary
+        7. move only along a valid route segment
     """
 
-    # A bus that finds nothing to board waits this many ticks before
-    # dispatching empty, so it doesn't freeze at a stop forever.
-    MAX_IDLE_TICKS_BEFORE_EMPTY_DISPATCH = 2
+    def __init__(self, route_registry: Optional["BusRouteRegistry"] = None):
+        self.routes = route_registry or BusRouteRegistry()
+        # Corridors we have already tried and failed to build a route for, so
+        # the planner does not retry (and re-log) the same impossible demand
+        # on every single tick.
+        self._unservable: set = set()
+
+    def reset(self) -> None:
+        """Clear planner state (called when the fleet is respawned)."""
+        self.routes.reset()
+        self._unservable.clear()
 
     def step(self, agents: Dict[str, object], units: Dict[str, "OperationalUnit"], tick: int) -> List[dict]:
         """Advance every corridor bus one tick; returns a list of event dicts."""
         buses = [unit for unit in units.values() if isinstance(unit, BusUnit) and unit.is_corridor_bus]
+        self._sync_routes(buses)
         events = self._advance_transit_and_disembark(agents, buses)
-        events += self._board_waiting_cohorts(agents, buses)
+        demand = self._collect_demand(agents)
+        events += self._dispatch_from_stops(agents, buses, demand)
+        events += self._plan_routes_for_unmet_demand(demand, buses, units)
         return events
 
+    def _sync_routes(self, buses: List["BusUnit"]) -> None:
+        """Make sure every bus's own route is registered and valid."""
+        for bus in buses:
+            if not bus.route_stops or bus.route_id in self.routes.routes:
+                continue
+            try:
+                self.routes.register(BusRoute(
+                    route_id=bus.route_id or f"ROUTE_{bus.unit_id}",
+                    stops=list(bus.route_stops),
+                    zones=list(bus.route_zones),
+                ))
+            except ValueError as error:
+                bus_log(f"{bus.unit_id}: refusing an invalid route -- {error}")
+
+    # ------------------------------------------------------------------
+    # Arrival
+    # ------------------------------------------------------------------
     def _advance_transit_and_disembark(self, agents: Dict[str, object], buses: List["BusUnit"]) -> List[dict]:
         events: List[dict] = []
         for bus in buses:
@@ -409,9 +762,10 @@ class ConvoyDispatchCoordinator:
             bus.current_node = arrival_node
             bus.target_node = arrival_node
             bus.status = "at_stop"
-            bus.direction_forward = not bus.direction_forward
             bus.idle_ticks_at_stop = 0
+            bus.waiting_ticks = 0
             bus.last_action = f"ARRIVED_AT_{arrival_node}"
+            riders = len(bus.manifest)
             for pilgrim_id in bus.manifest:
                 agent = agents.get(pilgrim_id)
                 if agent is None:
@@ -419,18 +773,25 @@ class ConvoyDispatchCoordinator:
                 agent.state.current_node = arrival_node
                 agent.state.travel_state = "PEDESTRIAN"
                 agent.state.boarded_unit_id = None
+            if riders:
+                bus_log(f"{bus.unit_id}: arrived at {arrival_node}, {riders} rider(s) disembarked")
             events.append({
                 "event": "bus_arrived", "unit_id": bus.unit_id,
-                "node": arrival_node, "passenger_count": len(bus.manifest),
+                "node": arrival_node, "passenger_count": riders,
             })
             bus.manifest = []
         return events
 
-    def _board_waiting_cohorts(self, agents: Dict[str, object], buses: List["BusUnit"]) -> List[dict]:
-        events: List[dict] = []
+    # ------------------------------------------------------------------
+    # Demand
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _collect_demand(agents: Dict[str, object]) -> Dict[Tuple[str, str], List[object]]:
+        """Group queued pilgrims by the single corridor hop each one needs next.
 
-        # Group every queued pilgrim by the corridor it needs, oldest-first
-        # within each Hamlah so cohorts board together (FIFO, starvation-free).
+        Oldest-first within each Hamlah, so cohorts board together and nobody
+        starves (FIFO).
+        """
         waiting_by_corridor: Dict[Tuple[str, str], List[object]] = {}
         for agent in agents.values():
             if agent.state.travel_state != "AWAITING_TRANSPORT":
@@ -449,56 +810,249 @@ class ConvoyDispatchCoordinator:
             waiting_by_corridor.setdefault((from_zone, to_zone), []).append(agent)
         for corridor_agents in waiting_by_corridor.values():
             corridor_agents.sort(key=lambda a: (a.profile.hamlah_id or "", a.state.awaiting_since_tick))
+        return waiting_by_corridor
+
+    # ------------------------------------------------------------------
+    # Boarding and dispatch
+    # ------------------------------------------------------------------
+    def _dispatch_from_stops(
+        self,
+        agents: Dict[str, object],
+        buses: List["BusUnit"],
+        demand: Dict[Tuple[str, str], List[object]],
+    ) -> List[dict]:
+        events: List[dict] = []
 
         for bus in buses:
             if bus.status != "at_stop":
                 continue
 
-            if bus.current_node == bus.stop_a_node:
-                from_zone, to_zone, to_node = bus.corridor_zone_a, bus.corridor_zone_b, bus.stop_b_node
-            else:
-                from_zone, to_zone, to_node = bus.corridor_zone_b, bus.corridor_zone_a, bus.stop_a_node
+            # (3) A valid route must exist before anything else is considered.
+            next_hop = bus.peek_next_stop()
+            if next_hop is None:
+                bus.last_action = "NO_ROUTE"
+                bus_log(f"{bus.unit_id}: no valid route assigned -- staying stationary")
+                continue
+            _, to_node, to_zone = next_hop
+            from_zone = bus.current_zone()
 
-            queue = waiting_by_corridor.get((from_zone, to_zone), [])
+            # (4) Demand for the direction this bus is facing.
+            queue = demand.get((from_zone, to_zone), [])
+
+            # (2) Capacity: board up to, and never beyond, the free seats.
             boarded: List[str] = []
-            remaining_capacity = bus.passenger_capacity
-            while queue and remaining_capacity > 0:
+            while queue and not bus.is_full:
                 agent = queue[0]
                 agent.state.travel_state = "IN_TRANSIT"
                 agent.state.boarded_unit_id = bus.unit_id
+                bus.manifest.append(agent.profile.pilgrim_id)
                 boarded.append(agent.profile.pilgrim_id)
-                remaining_capacity -= 1
                 # Pop from the shared queue so a second bus on this corridor
                 # this same tick doesn't double-board the same pilgrim.
                 queue.pop(0)
 
-            if boarded:
-                bus.manifest = boarded
-                bus.idle_ticks_at_stop = 0
-                self._depart(bus, to_node, from_zone, to_zone)
-                events.append({"event": "bus_departed", "unit_id": bus.unit_id, "passenger_count": len(boarded)})
-            elif queue:
-                # Something is waiting for this corridor, but this bus is
-                # already full -- leave it at the stop for the next tick.
-                bus.last_action = "AT_STOP_FULL"
-            else:
-                bus.idle_ticks_at_stop += 1
-                bus.last_action = "AT_STOP_WAITING"
-                if bus.idle_ticks_at_stop >= self.MAX_IDLE_TICKS_BEFORE_EMPTY_DISPATCH:
-                    bus.manifest = []
-                    self._depart(bus, to_node, from_zone, to_zone)
-                    bus.idle_ticks_at_stop = 0
+            if queue and bus.is_full:
+                bus_log(
+                    f"{bus.unit_id}: {bus.current_riders}/{bus.passenger_capacity} capacity reached -- "
+                    f"{len(queue)} pilgrim(s) left waiting at {bus.current_node}"
+                )
+
+            # (1) Passenger count decides whether it is allowed to move at all.
+            if bus.has_minimum_riders():
+                bus_log(
+                    f"{bus.unit_id}: {bus.current_riders} riders -> minimum reached, starting route "
+                    f"({bus.current_node} -> {to_node})"
+                )
+                self._depart(bus, events)
+                continue
+
+            # Under the minimum: hold. This is the core rule -- an under-filled
+            # bus stays where it is.
+            bus.waiting_ticks += 1
+            bus.idle_ticks_at_stop += 1
+
+            if bus.current_riders > 0:
+                bus.status = "at_stop"
+                bus.last_action = "HOLDING_FOR_RIDERS"
+                bus_log(
+                    f"{bus.unit_id}: {bus.current_riders} riders -> staying stationary "
+                    f"(minimum = {bus.min_riders_to_move}), waited {bus.waiting_ticks} tick(s)"
+                )
+                # Escape hatch so a handful of pilgrims on a quiet corridor are
+                # not stranded for the rest of the run.
+                if (
+                    MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH > 0
+                    and bus.waiting_ticks >= MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH
+                ):
+                    bus_log(
+                        f"{bus.unit_id}: held {bus.waiting_ticks} tick(s) with {bus.current_riders} rider(s) "
+                        f"-> dispatching under-full so they are not stranded"
+                    )
+                    self._depart(bus, events)
+                continue
+
+            # Completely empty.
+            bus.last_action = "AT_STOP_EMPTY"
+            bus_log(f"{bus.unit_id}: 0 riders -> staying stationary (minimum = {bus.min_riders_to_move})")
+            if ALLOW_EMPTY_REPOSITIONING and self._should_reposition(bus, buses, demand, to_zone):
+                bus_log(
+                    f"{bus.unit_id}: riders waiting at {to_node} with no bus there -> "
+                    f"repositioning empty along its own route"
+                )
+                self._depart(bus, events)
         return events
 
     @staticmethod
-    def _depart(bus: "BusUnit", to_node: str, from_zone: str, to_zone: str) -> None:
-        """Dispatch a bus from its current stop toward the other end of its corridor."""
+    def _should_reposition(
+        bus: "BusUnit",
+        buses: List["BusUnit"],
+        demand: Dict[Tuple[str, str], List[object]],
+        to_zone: str,
+    ) -> bool:
+        """True when an empty bus should move to reach demand it alone can serve.
+
+        Strictly limited: there must be real demand at the far end of this
+        bus's own route, and no other bus already positioned to serve it.
+        """
+        return_zone = bus.current_zone()
+        onward = demand.get((to_zone, return_zone), [])
+        if not onward:
+            return False
+        for other in buses:
+            if other is bus:
+                continue
+            # Only a bus that serves THIS corridor counts as coverage. A bus
+            # parked in the same zone on an unrelated route cannot pick these
+            # pilgrims up, so treating it as coverage would strand them --
+            # which is exactly what happened before this check was narrowed.
+            other_pairs = list(zip(other.route_zones, other.route_zones[1:]))
+            if (to_zone, return_zone) not in other_pairs and (return_zone, to_zone) not in other_pairs:
+                continue
+            if other.status == "at_stop" and other.current_zone() == to_zone:
+                return False  # someone who can serve them is already there
+            if other.status == "in_transit" and zone_of(other.transit_to_node) == to_zone:
+                return False  # someone who can serve them is already on the way
+        return True
+
+    def _depart(self, bus: "BusUnit", events: List[dict]) -> None:
+        """Move a bus one segment along its own route, validating the hop first."""
+        next_hop = bus.peek_next_stop()
+        if next_hop is None:
+            bus.last_action = "NO_ROUTE"
+            return
+        index, to_node, to_zone = next_hop
+
+        # (7) The hop must be an adjacent stop on this route AND a real
+        # corridor. A bus that somehow asked for anything else stays put.
+        if not bus.is_valid_next_hop(to_node):
+            bus.last_action = "INVALID_SEGMENT_REFUSED"
+            bus_log(
+                f"{bus.unit_id}: REFUSED move {bus.current_node} -> {to_node} "
+                f"-- not an adjacent segment of its route ({bus.route_description()})"
+            )
+            return
+
+        from_zone = bus.route_zones[bus.route_index]
+        from_node = bus.current_node
         bus.status = "in_transit"
-        bus.transit_from_node = bus.current_node
+        bus.transit_from_node = from_node
         bus.transit_to_node = to_node
         bus.transit_ticks_required = corridor_ticks(from_zone, to_zone)
         bus.transit_ticks_elapsed = 0
         bus.transit_progress = 0.0
+        bus.target_node = to_node
+        bus.idle_ticks_at_stop = 0
+        bus.waiting_ticks = 0
+        bus.last_action = f"DEPARTED_FOR_{to_node}"
+
+        # Advance the route cursor, flipping direction at either end.
+        bus.next_route_index()
+        bus.route_index = index
+
+        bus_log(
+            f"{bus.unit_id}: moving {from_node} -> {to_node} "
+            f"({bus.current_riders}/{bus.passenger_capacity} capacity, {bus.transit_ticks_required} tick(s))"
+        )
+        events.append({
+            "event": "bus_departed", "unit_id": bus.unit_id,
+            "from_node": from_node, "to_node": to_node,
+            "passenger_count": bus.current_riders,
+        })
+
+    # ------------------------------------------------------------------
+    # Route creation (last resort)
+    # ------------------------------------------------------------------
+    def _plan_routes_for_unmet_demand(
+        self,
+        demand: Dict[Tuple[str, str], List[object]],
+        buses: List["BusUnit"],
+        units: Dict[str, "OperationalUnit"],
+    ) -> List[dict]:
+        """Create a route only for demand no existing route can serve.
+
+        (5) existing routes first, (6) a new route only if genuinely needed.
+        """
+        events: List[dict] = []
+        for (from_zone, to_zone), waiting in demand.items():
+            if not waiting or (from_zone, to_zone) in self._unservable:
+                continue
+
+            # (5) Does any bus already serve this corridor? Then nothing to do.
+            already_served = False
+            for bus in buses:
+                if len(bus.route_zones) < 2:
+                    continue
+                pairs = list(zip(bus.route_zones, bus.route_zones[1:]))
+                if (from_zone, to_zone) in pairs or (to_zone, from_zone) in pairs:
+                    already_served = True
+                    break
+            if already_served:
+                continue
+
+            bus_log(
+                f"Dispatcher: {len(waiting)} pilgrim(s) need {from_zone} -> {to_zone}, "
+                f"no bus serves it -- checking existing routes"
+            )
+            existing = self.routes.find_route_serving(from_zone, to_zone)
+            if existing is not None:
+                bus_log(f"Dispatcher: existing route {existing.route_id} covers it ({existing.describe()})")
+                new_route = existing
+            else:
+                bus_log(f"Dispatcher: no suitable route -> creating a new valid route for {from_zone} -> {to_zone}")
+                new_route = self.routes.create_route_for(from_zone, to_zone)
+                if new_route is None:
+                    bus_log(f"Dispatcher: {from_zone} -> {to_zone} is not reachable over the road network -- skipping")
+                    self._unservable.add((from_zone, to_zone))
+                    continue
+                bus_log(f"Dispatcher: created {new_route.route_id}: {new_route.describe()}")
+
+            # (6) Put exactly one bus on it -- no more than the demand needs.
+            unit_id = f"BUS_{new_route.route_id}"
+            if unit_id in units:
+                continue
+            start_index = new_route.zones.index(from_zone) if from_zone in new_route.zones else 0
+            units[unit_id] = BusUnit(
+                unit_id=unit_id,
+                unit_type="bus",
+                current_node=new_route.stops[start_index],
+                target_node=new_route.stops[start_index],
+                is_corridor_bus=True,
+                corridor_zone_a=new_route.zones[0],
+                corridor_zone_b=new_route.zones[-1],
+                stop_a_node=new_route.stops[0],
+                stop_b_node=new_route.stops[-1],
+                route_id=new_route.route_id,
+                route_stops=list(new_route.stops),
+                route_zones=list(new_route.zones),
+                route_index=start_index,
+                status="at_stop",
+            )
+            bus_log(f"Dispatcher: assigned {unit_id} to {new_route.route_id}")
+            events.append({
+                "event": "route_created", "route_id": new_route.route_id,
+                "unit_id": unit_id, "stops": list(new_route.stops),
+            })
+        return events
 
 
 @dataclass
@@ -666,6 +1220,12 @@ class UnitFactory:
                 # coverage at both ends immediately, not stacked at one end.
                 start_at_a = slot % 2 == 0
                 unit_id = f"BUS_{bus_index:02d}"
+                # The corridor IS the route: an ordered two-stop list the bus
+                # walks back and forth. route_index says which end it is at,
+                # and direction_forward which way it is facing, so its very
+                # first departure heads for the opposite stop.
+                route_stops = [spec["stop_a"], spec["stop_b"]]
+                route_zones = [spec["zone_a"], spec["zone_b"]]
                 units[unit_id] = BusUnit(
                     unit_id=unit_id,
                     unit_type="bus",
@@ -676,6 +1236,11 @@ class UnitFactory:
                     corridor_zone_b=spec["zone_b"],
                     stop_a_node=spec["stop_a"],
                     stop_b_node=spec["stop_b"],
+                    route_id=f"ROUTE_{spec['zone_a']}_{spec['zone_b']}",
+                    route_stops=route_stops,
+                    route_zones=route_zones,
+                    route_index=0 if start_at_a else 1,
+                    direction_forward=start_at_a,
                     status="at_stop",
                 )
                 bus_index += 1
