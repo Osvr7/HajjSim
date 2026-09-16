@@ -733,6 +733,88 @@ def next_hop_zone(from_zone: str, to_zone: str) -> Optional[str]:
 
 
 # ============================================================
+# 2c) Risk model and congestion labels
+# ------------------------------------------------------------
+# The rule-based engine already reacted to stress/hazards implicitly. The LLM
+# decision layer needs that judgement made *explicit* and numeric, so it can be
+# put in a prompt, logged as a risk event, and analysed after the run.
+# ============================================================
+
+# How much each hazard contributes to a pilgrim's situational risk score.
+HAZARD_RISK_WEIGHTS: Dict[str, float] = {
+    "stampede_risk": 34.0,
+    "crowd_bottleneck": 26.0,
+    "extreme_heat": 22.0,
+    "heat_stress": 20.0,
+    "medical_overload": 20.0,
+    "route_closure": 18.0,
+    "medical_incident": 16.0,
+    "route_congestion": 16.0,
+    "lost_group_member": 14.0,
+    "transport_delay": 10.0,
+}
+
+# Plain-language hazard descriptions, so the model reasons about the situation
+# rather than about an opaque snake_case token.
+HAZARD_DESCRIPTIONS: Dict[str, str] = {
+    "stampede_risk": "Crowd compression is high enough that a stampede could start; movement against the flow is dangerous.",
+    "crowd_bottleneck": "A narrow point is backing up; throughput has dropped and pressure is building behind it.",
+    "extreme_heat": "Ambient heat is at a dangerous level; exposure without shade or water is harmful.",
+    "heat_stress": "Heat casualties are appearing; vulnerable pilgrims need shade and hydration.",
+    "medical_overload": "Medical posts are saturated; a new casualty would not be treated quickly.",
+    "route_closure": "A route has been closed; anyone routed through it must be diverted.",
+    "medical_incident": "A medical incident is in progress nearby and is drawing crowd attention.",
+    "route_congestion": "The route is congested; travel along it is slower and more stressful than normal.",
+    "lost_group_member": "A group member has been separated; the group is distracted and slowing down.",
+    "transport_delay": "Buses are running late; queues at transport stops are growing.",
+}
+
+# Ordered high-to-low; the first threshold a score clears wins.
+RISK_LEVEL_THRESHOLDS: Tuple[Tuple[float, str], ...] = (
+    (75.0, "severe"),
+    (55.0, "high"),
+    (35.0, "moderate"),
+    (15.0, "low"),
+)
+
+# A risk at or above this level opens a tracked risk event in the simulation log.
+SIGNIFICANT_RISK_LEVELS = {"high", "severe"}
+
+
+def classify_risk_level(score: float) -> str:
+    """Bucket a 0-100 risk score into a named severity level."""
+    for threshold, level in RISK_LEVEL_THRESHOLDS:
+        if score >= threshold:
+            return level
+    return "none"
+
+
+def node_capacity(node_id: str) -> int:
+    """Return the modelled capacity of a node (with a safe default)."""
+    return NODE_CAPACITY_BASELINES.get(node_id, DEFAULT_NODE_CAPACITY)
+
+
+def congestion_label(ratio: float) -> str:
+    """Turn an occupancy/capacity ratio into a word the model can reason about."""
+    if ratio >= 1.15:
+        return "over capacity"
+    if ratio >= 0.85:
+        return "very congested"
+    if ratio >= 0.6:
+        return "busy"
+    if ratio >= 0.3:
+        return "moderate"
+    return "clear"
+
+
+def describe_hazard(hazard: Optional[str]) -> str:
+    """Return a readable description for a hazard token."""
+    if not hazard:
+        return "No active hazard reported in this area."
+    return HAZARD_DESCRIPTIONS.get(str(hazard), f"Active hazard: {hazard}.")
+
+
+# ============================================================
 # 3) Agent architecture: four-layer model
 # ------------------------------------------------------------
 # The simulation models each pilgrim through four layers:
@@ -813,6 +895,15 @@ class DynamicState:
     boarded_unit_id: Optional[str] = None
     awaiting_since_tick: int = -1
     checked_in_hotel_id: Optional[str] = None
+    # LLM decision layer: provenance of the most recent decision plus the risk
+    # picture that produced it. Written every tick by the behavior engine and
+    # surfaced in the dashboard sidebar, the decision log, and the final report.
+    last_decision_source: str = "rule_based"
+    last_decision_reason: str = ""
+    last_fallback_action: str = ""
+    risk_level: str = "none"
+    risk_score: float = 0.0
+    risk_factors: List[str] = field(default_factory=list)
 
 
 # ==========================================
@@ -894,6 +985,12 @@ class BehaviorEngine:
         # Rule-based logic is the default; the optional override can replace it
         # for experiments without changing the core model.
         rule_based_action = self._rule_based_decision(environment_data)
+        # Provenance defaults to the rule engine. An llm_override that actually
+        # runs overwrites these three fields on the agent's state, so the
+        # dashboard and the decision log can always tell who chose the action.
+        self.agent.state.last_decision_source = "rule_based"
+        self.agent.state.last_decision_reason = ""
+        self.agent.state.last_fallback_action = rule_based_action
         llm_action = self._apply_llm_override(environment_data, rule_based_action)
         return llm_action or rule_based_action
 
@@ -1021,6 +1118,9 @@ class PilgrimAgent:
         self._sync_ritual_goal(environment_data)
         self._mark_completed_rituals_before_current_tick(environment_data)
         self._perceive_environment(environment_data)
+        # Risk is scored before the decision so the LLM prompt, the risk-event
+        # log and the after-action report all read the same numbers.
+        self.assess_risk(environment_data)
         action = self.brain.decide_action(environment_data)
         self._execute_action(action, environment_data)
         self._update_ritual_progress(environment_data)
@@ -1507,6 +1607,334 @@ class PilgrimAgent:
         if self.state.travel_state == "CHECKED_IN_HOTEL":
             self.state.travel_state = "PEDESTRIAN"
 
+    # ------------------------------------------------------------------
+    # LLM decision support: risk assessment, action catalogue, observation
+    # ------------------------------------------------------------------
+    def assess_risk(self, environment_data: dict) -> dict:
+        """Score the pilgrim's current situational risk and name the drivers.
+
+        Runs every tick right after perception, so both the LLM prompt and the
+        risk-event log read the same numbers the agent actually "felt".
+        """
+        state = self.state
+        hazard = environment_data.get("hazard")
+        density = float(environment_data.get("density", 0.0))
+        temperature = float(environment_data.get("temperature", 32.0))
+        node_counts = environment_data.get("node_counts") or {}
+
+        score = 0.0
+        factors: List[str] = []
+
+        if hazard:
+            hazard_weight = HAZARD_RISK_WEIGHTS.get(str(hazard), 12.0)
+            score += hazard_weight
+            factors.append(f"active hazard: {hazard}")
+
+        if density >= 8.0:
+            score += 22.0
+            factors.append(f"critical crowd density ({density:.1f}/10)")
+        elif density >= 6.0:
+            score += 12.0
+            factors.append(f"elevated crowd density ({density:.1f}/10)")
+
+        if temperature >= 44.0:
+            score += 14.0
+            factors.append(f"extreme heat ({temperature:.0f} C)")
+        elif temperature >= 40.0:
+            score += 7.0
+            factors.append(f"high heat ({temperature:.0f} C)")
+
+        occupancy = int(node_counts.get(state.current_node, 0))
+        capacity = node_capacity(state.current_node)
+        congestion_ratio = occupancy / capacity if capacity else 0.0
+        if congestion_ratio >= 1.0:
+            score += 16.0
+            factors.append(f"{state.current_node} is over capacity ({occupancy}/{capacity})")
+        elif congestion_ratio >= 0.85:
+            score += 9.0
+            factors.append(f"{state.current_node} is very congested ({occupancy}/{capacity})")
+
+        if state.is_panicking:
+            score += 25.0
+            factors.append("pilgrim is panicking")
+        if state.stress >= 85.0:
+            score += 14.0
+            factors.append(f"critical stress ({state.stress:.0f}/100)")
+        elif state.stress >= 70.0:
+            score += 7.0
+            factors.append(f"high stress ({state.stress:.0f}/100)")
+
+        if state.hydration <= 25.0:
+            score += 16.0
+            factors.append(f"severe dehydration ({state.hydration:.0f}/100)")
+        elif state.hydration <= 40.0:
+            score += 8.0
+            factors.append(f"low hydration ({state.hydration:.0f}/100)")
+
+        if state.fatigue >= 85.0:
+            score += 12.0
+            factors.append(f"critical fatigue ({state.fatigue:.0f}/100)")
+        elif state.fatigue >= 70.0:
+            score += 6.0
+            factors.append(f"high fatigue ({state.fatigue:.0f}/100)")
+
+        if not state.is_with_group:
+            score += 6.0
+            factors.append("separated from group")
+
+        if self.profile.health_status == "high_risk":
+            score += 8.0
+            factors.append("high-risk health profile")
+        elif self.profile.health_status == "needs_support":
+            score += 4.0
+            factors.append("needs-support health profile")
+
+        score = max(0.0, min(100.0, score))
+        state.risk_score = round(score, 1)
+        state.risk_level = classify_risk_level(score)
+        state.risk_factors = factors
+        return {
+            "level": state.risk_level,
+            "score": state.risk_score,
+            "factors": factors,
+            "hazard": str(hazard) if hazard else None,
+        }
+
+    def _describe_node(self, node_id: str, environment_data: dict) -> dict:
+        """Describe a candidate destination: distance, access, congestion, hazards."""
+        node_counts = environment_data.get("node_counts") or {}
+        current = self.state.current_node
+        route = plan_route(current, node_id)
+        hops = max(0, len(route) - 1)
+        from_zone = zone_of(current)
+        to_zone = zone_of(node_id)
+        occupancy = int(node_counts.get(node_id, 0))
+        capacity = node_capacity(node_id)
+        ratio = round(occupancy / capacity, 2) if capacity else 0.0
+        requires_bus = from_zone != to_zone
+        travel_minutes = corridor_minutes(from_zone, to_zone) if requires_bus else hops * 15
+        return {
+            "target_node": node_id,
+            "zone": to_zone,
+            "distance_hops": hops,
+            "route_preview": route[:5],
+            "requires_bus": requires_bus,
+            "estimated_travel_minutes": travel_minutes,
+            "occupancy": occupancy,
+            "capacity": capacity,
+            "congestion_ratio": ratio,
+            "congestion": congestion_label(ratio),
+            "known_hazard_there": self.memory.long_term.known_hazards.get(node_id),
+        }
+
+    def available_actions(self, environment_data: dict) -> List[dict]:
+        """List every action the engine can actually execute for this pilgrim now.
+
+        This is the contract handed to the LLM: it may only pick a value from
+        ``action`` in this list. Every entry here maps onto a branch that
+        :meth:`_execute_action` genuinely implements, so a valid choice can
+        never be un-executable.
+        """
+        state = self.state
+
+        # Two states are owned by the ConvoyDispatchCoordinator, not the
+        # pilgrim. Offering a choice there would be a lie, so the catalogue
+        # collapses to the single forced action and the caller skips the model.
+        if state.travel_state == "IN_TRANSIT":
+            return [{
+                "action": "IN_TRANSIT",
+                "kind": "locked",
+                "label": "Remain on the bus; the convoy coordinator controls this pilgrim.",
+            }]
+        if state.travel_state == "AWAITING_TRANSPORT" and zone_of(state.current_node) != zone_of(state.target_node):
+            return [{
+                "action": "AWAITING_TRANSPORT",
+                "kind": "locked",
+                "label": "Stay queued at the transport stop until a corridor bus arrives.",
+            }]
+
+        actions: List[dict] = []
+        seen: set = set()
+
+        def add(action: str, kind: str, label: str, node_id: Optional[str] = None) -> None:
+            """Append one unique action entry, enriched if it targets a node."""
+            if action in seen:
+                return
+            seen.add(action)
+            entry = {"action": action, "kind": kind, "label": label}
+            if node_id:
+                entry.update(self._describe_node(node_id, environment_data))
+            actions.append(entry)
+
+        add(
+            "WAIT_FOR_RITUAL_WINDOW",
+            "stay",
+            "Stay exactly where you are and wait. Slight stress relief, no progress toward the ritual.",
+        )
+        add(
+            "REST",
+            "rest",
+            "Stop and recover: -12 fatigue, -9 stress, +14 hydration. Best when vitals are the real threat.",
+        )
+
+        # Continue on the current path toward the ritual obligation.
+        if state.target_node and state.target_node != state.current_node:
+            add(
+                f"MOVE_TO_{state.target_node}",
+                "advance",
+                "Continue on the planned route toward the current ritual target.",
+                state.target_node,
+            )
+
+        # Change to another road/path: every directly connected neighbour.
+        for neighbor in ROUTE_GRAPH.get(state.current_node, []):
+            add(
+                f"MOVE_TO_{neighbor}",
+                "reroute",
+                "Switch to this adjacent path/location instead of the planned route.",
+                neighbor,
+            )
+
+        # Divert to the scenario's designated relief node.
+        alternate_node = environment_data.get("alternate_node")
+        if alternate_node and alternate_node != state.current_node:
+            add(
+                "AVOID_CROWD",
+                "avoid",
+                f"Divert to the designated lower-pressure relief point ({alternate_node}); costs less effort and relieves stress.",
+                alternate_node,
+            )
+
+        # Rejoin the group when it has been seen elsewhere.
+        group_node = self.memory.social.group_last_seen_node
+        if group_node and group_node != state.current_node:
+            add(
+                f"MOVE_TO_{group_node}",
+                "regroup",
+                "Move to where the group was last seen in order to rejoin it.",
+                group_node,
+            )
+
+        add(
+            "STRAGGLE",
+            "drift",
+            "Break from the group and take a short unplanned detour to a random neighbouring node.",
+        )
+
+        # Emergency evacuation is only offered when it is a plausible response.
+        panic_node = environment_data.get("panic_node")
+        hazard = environment_data.get("hazard")
+        if panic_node and (state.is_panicking or state.stress >= 85.0 or hazard in {"stampede_risk", "crowd_bottleneck"}):
+            add(
+                "ENTER_PANIC_MODE",
+                "emergency",
+                f"Emergency evacuation toward {panic_node}. High physical cost -- only for genuine danger.",
+                panic_node,
+            )
+
+        return actions
+
+    def build_observation(self, environment_data: dict) -> dict:
+        """Build the full environment snapshot handed to the LLM each step.
+
+        Everything the simulation knows that could reasonably change a
+        decision: where the pilgrim is, what it is standing in, what it is
+        trying to reach, how it feels, what it just did, and what the risk
+        picture looks like right now.
+        """
+        state = self.state
+        profile = self.profile
+        node_counts = environment_data.get("node_counts") or {}
+        current = state.current_node
+        occupancy = int(node_counts.get(current, 0))
+        capacity = node_capacity(current)
+        ratio = round(occupancy / capacity, 2) if capacity else 0.0
+        hazard = environment_data.get("hazard")
+        target = state.target_node
+
+        # Repeated visits expose oscillation ("I keep bouncing between two
+        # nodes") which the model is explicitly asked to avoid.
+        recent_nodes = list(self.memory.short_term.recent_nodes)
+        repeated_visits = {
+            node: recent_nodes.count(node) for node in set(recent_nodes) if recent_nodes.count(node) > 1
+        }
+
+        return {
+            "simulation": {
+                "tick": state.simulation_tick,
+                "simulated_time": environment_data.get("simulated_time_label"),
+                "day_label": environment_data.get("simulation_day_label"),
+                "current_ritual": environment_data.get("current_ritual"),
+                "next_ritual": environment_data.get("next_ritual"),
+                "ritual_window_open": bool(state.ritual_window_open),
+            },
+            "pilgrim": {
+                "pilgrim_id": profile.pilgrim_id,
+                "age": profile.age,
+                "nationality": profile.nationality,
+                "health_status": profile.health_status,
+                "chronic_conditions": list(profile.chronic_conditions),
+                "mobility_0_to_1": profile.mobility,
+                "risk_tolerance_0_to_1": profile.risk_tolerance,
+                "group_id": profile.group_id,
+                "hamlah_id": profile.hamlah_id,
+            },
+            "location": {
+                "current_node": current,
+                "zone": zone_of(current),
+                "occupancy": occupancy,
+                "capacity": capacity,
+                "congestion_ratio": ratio,
+                "congestion": congestion_label(ratio),
+                "connected_nodes": list(ROUTE_GRAPH.get(current, [])),
+                "known_hazard_here": self.memory.long_term.known_hazards.get(current),
+            },
+            "ritual": {
+                "target_node": target,
+                "target_zone": zone_of(target) if target else None,
+                "window_open": bool(state.ritual_window_open),
+                "distance_hops": max(0, len(plan_route(current, target)) - 1) if target else 0,
+                "requires_bus": bool(target) and zone_of(current) != zone_of(target),
+                "rituals_completed": len(self.memory.long_term.ritual_progress),
+                "active_route": list(state.active_route),
+            },
+            "vitals": {
+                "stress": round(state.stress, 1),
+                "fatigue": round(state.fatigue, 1),
+                "hydration": round(state.hydration, 1),
+                "is_panicking": state.is_panicking,
+                "travel_state": state.travel_state,
+                "is_straggling": state.is_straggling,
+            },
+            "conditions": {
+                "crowd_density_0_to_10": round(float(environment_data.get("density", 0.0)), 1),
+                "temperature_c": round(float(environment_data.get("temperature", 32.0)), 1),
+                "hazard": str(hazard) if hazard else None,
+                "hazard_description": describe_hazard(hazard),
+                "relief_node": environment_data.get("alternate_node"),
+                "emergency_node": environment_data.get("panic_node"),
+            },
+            "risk": {
+                "level": state.risk_level,
+                "score_0_to_100": state.risk_score,
+                "factors": list(state.risk_factors),
+            },
+            "group": {
+                "is_with_group": state.is_with_group,
+                "group_last_seen_node": self.memory.social.group_last_seen_node,
+                "leader_id": self.memory.social.leader_id,
+                "companions": list(self.memory.social.known_companions)[:5],
+            },
+            "history": {
+                "last_action": state.last_action,
+                "last_decision_source": state.last_decision_source,
+                "recent_nodes": recent_nodes,
+                "recent_events": list(self.memory.short_term.recent_events)[-5:],
+                "repeated_node_visits": repeated_visits,
+                "remembered_hazards": dict(self.memory.long_term.known_hazards),
+            },
+        }
+
     def get_snapshot(self) -> dict:
         """Return a JSON-ready representation of all four agent layers."""
         # Snapshot output mirrors the four-layer model so the dashboard can show
@@ -1548,6 +1976,12 @@ class PilgrimAgent:
                 "boarded_unit_id": self.state.boarded_unit_id,
                 "awaiting_since_tick": self.state.awaiting_since_tick,
                 "checked_in_hotel_id": self.state.checked_in_hotel_id,
+                "last_decision_source": self.state.last_decision_source,
+                "last_decision_reason": self.state.last_decision_reason,
+                "last_fallback_action": self.state.last_fallback_action,
+                "risk_level": self.state.risk_level,
+                "risk_score": self.state.risk_score,
+                "risk_factors": list(self.state.risk_factors),
             },
             "memory": {
                 "short_term": {

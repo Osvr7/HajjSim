@@ -225,6 +225,9 @@ const fullscreenToggleButton = document.querySelector("#fullscreenToggleButton")
 const deployButtons = document.querySelectorAll(".deploy-btn");
 const placementModeBanner = document.querySelector("#placementModeBanner");
 const playbackStateIndicator = document.querySelector("#playbackStateIndicator");
+const llmStatusBar = document.querySelector("#llmStatusBar");
+const llmReportBody = document.querySelector("#llmReportBody");
+const generateLlmReportButton = document.querySelector("#generateLlmReportButton");
 const mapWrapEl = document.querySelector(".map-wrap");
 
 // Frontend runtime state mirrored from the backend API.
@@ -265,6 +268,10 @@ let placementMode = null; // { unitType: string } | null
 
 let analyticsBarChart;
 let deploymentImpactChart;
+
+// Live status of the LLM decision layer, refreshed on every dashboard refresh.
+let llmStatus = null;
+let llmReportShownForRun = false;
 
 // Layer-visibility toggles, keyed by the data-layer values in index.html.
 const UNIT_LAYER_GROUPS = {
@@ -1600,6 +1607,241 @@ generateReportButton?.addEventListener("click", async () => {
   }
 });
 
+// ============================================================
+// LLM decision layer: status badge and after-action report
+// ------------------------------------------------------------
+// The backend decides every pedestrian action through llm_decide_action(); this
+// section surfaces (a) whether the model is actually live, and (b) the
+// six-section report built from the recorded decision log.
+// ============================================================
+
+// Render the model status strip above the LLM report.
+function renderLlmStatus(status) {
+  llmStatus = status || null;
+  if (!llmStatusBar) {
+    return;
+  }
+  if (!status) {
+    llmStatusBar.innerHTML = `<span class="llm-badge llm-badge-off">Model status unavailable</span>`;
+    return;
+  }
+
+  const stats = status.stats || {};
+  const live = status.active;
+  const stateBadge = live
+    ? `<span class="llm-badge llm-badge-on">LLM active — ${status.provider} / ${status.model}</span>`
+    : `<span class="llm-badge llm-badge-off">LLM inactive — ${
+        status.api_key_present ? "enabled=false or unknown provider" : "no LLM_API_KEY set"
+      } (agents fall back to rule-based decisions)</span>`;
+
+  const driven = status.max_agents === 0 ? "all pilgrims" : `${status.max_agents} pilgrim(s)`;
+  llmStatusBar.innerHTML = `
+    ${stateBadge}
+    <span class="llm-stat">Driving: <strong>${driven}</strong></span>
+    <span class="llm-stat">Decisions: <strong>${stats.decisions_total || 0}</strong>
+      (${stats.decisions_from_llm || 0} model / ${stats.decisions_from_fallback || 0} fallback)</span>
+    <span class="llm-stat">API calls: <strong>${stats.calls_succeeded || 0}</strong> ok,
+      ${stats.calls_failed || 0} failed, ${stats.cache_hits || 0} cached, ${stats.budget_skips || 0} over budget</span>
+    <span class="llm-stat">Avg latency: <strong>${status.avg_latency_ms || 0} ms</strong></span>
+    ${status.last_error ? `<span class="llm-stat llm-error">Last error: ${status.last_error}</span>` : ""}
+  `;
+}
+
+// Fetch just the model status (cheap; called on every dashboard refresh).
+async function refreshLlmStatus() {
+  try {
+    const response = await fetchJson("/api/llm/status");
+    renderLlmStatus(response.llm);
+  } catch (error) {
+    renderLlmStatus(null);
+  }
+}
+
+// Turn one list of items into a bulleted analytics list.
+function llmList(items, emptyText) {
+  return items && items.length
+    ? `<ul class="analytics-list">${items.map((item) => `<li>${item}</li>`).join("")}</ul>`
+    : `<ul class="analytics-list"><li>${emptyText}</li></ul>`;
+}
+
+// Render the full six-section after-action report.
+function renderLlmReport(report) {
+  if (!llmReportBody) {
+    return;
+  }
+  if (!report || !report.has_data) {
+    llmReportBody.innerHTML =
+      `<p class="analytics-empty">${report?.message || "No simulation data recorded yet — advance the simulation at least one tick."}</p>`;
+    return;
+  }
+
+  const overview = report.overview;
+  const decisions = report.decision_analysis;
+  const risks = report.risk_analysis;
+  const performance = report.agent_performance;
+  const summary = report.final_summary;
+
+  // 1) Overview
+  const overviewHtml = `
+    <div class="llm-metric-grid">
+      ${statBlock("Duration", `${overview.ticks_recorded} ticks / ${overview.simulated_hours}h`)}
+      ${statBlock("Decision steps", overview.decision_steps)}
+      ${statBlock("From the LLM", `${overview.llm_decision_steps} (${overview.llm_share_percent}%)`)}
+      ${statBlock("Movements", overview.movements)}
+      ${statBlock("Risks detected", overview.risk_events_detected)}
+      ${statBlock("Run completed", overview.run_completed ? "Yes" : "No")}
+    </div>`;
+
+  // 2) Decisions
+  const actionRows = (decisions.action_counts || []).slice(0, 10).map((entry) =>
+    `<tr><td><code>${entry.action}</code></td><td>${entry.count}</td><td>${entry.share_percent}%</td></tr>`
+  ).join("");
+  const keyPoints = (decisions.key_decision_points || []).slice(0, 5).map((point) =>
+    `<strong>Tick ${point.tick}</strong> · ${point.pilgrim_id} at ${point.location} ` +
+    `(risk ${point.risk_level} ${point.risk_score}, ${point.options_offered} options) → ` +
+    `<strong>${point.action}</strong> — <em>${point.reason || "no reason given"}</em> ` +
+    `(risk after: ${point.risk_score_after})`
+  );
+  const goodExamples = (decisions.successful_examples || []).map((item) =>
+    `${item.pilgrim_id} chose <strong>${item.action}</strong> at ${item.location} → risk ${item.risk_score} → ${item.risk_score_after}`
+  );
+  const badExamples = (decisions.unsuccessful_examples || []).map((item) =>
+    `${item.pilgrim_id} chose <strong>${item.action}</strong> at ${item.location} → risk ${item.risk_score} → ${item.risk_score_after}`
+  );
+
+  // 3) Risks
+  const riskEvents = (risks.significant_events || []).slice(0, 5).map((event) => `
+    <li>
+      <strong>${event.event_id} — ${event.risk_type}</strong> (${event.pilgrim_id})<br />
+      <span class="llm-muted">When:</span> tick ${event.opened_tick}, ${event.duration_ticks} tick(s) ·
+      <span class="llm-muted">Where:</span> ${event.location}<br />
+      <span class="llm-muted">Trigger:</span> ${(event.trigger_factors || []).join(", ") || "unspecified"}<br />
+      <span class="llm-muted">Environment:</span> density ${event.environment?.crowd_density}, ${event.environment?.temperature_c}°C,
+      hazard ${event.environment?.hazard || "none"}, node ${event.environment?.occupancy}/${event.environment?.capacity}<br />
+      <span class="llm-muted">Severity:</span> opened ${event.opened_score}, peaked ${event.peak_score} (${event.peak_level})<br />
+      <span class="llm-muted">Decisions:</span> ${event.decision_count}${
+        event.first_response_action
+          ? `, first response <code>${event.first_response_action}</code> after ${event.response_delay_ticks} tick(s)`
+          : ", no protective action recorded"
+      }<br />
+      <span class="llm-muted">Aftermath:</span> ${event.outcome_detail}<br />
+      <span class="llm-muted">Effective?</span> <strong>${event.effective ? "Yes" : "No"}</strong> (${event.outcome})
+    </li>`).join("");
+
+  // 4) Performance
+  const avoidance = performance.risk_avoidance;
+  const response = performance.response_time;
+  const route = performance.route_changes;
+  const efficiency = performance.movement_efficiency;
+  const consistency = performance.decision_consistency;
+  const problematic = performance.problematic_behavior;
+
+  // 5) Improvements
+  const improvementItems = (report.improvements || []).map((item) =>
+    `<strong>${item.area}</strong> — ${item.suggestion}<br /><span class="llm-muted">Evidence: ${item.evidence}</span>`
+  );
+
+  llmReportBody.innerHTML = `
+    <section>
+      <h3 class="analytics-section-title">1. Simulation Overview</h3>
+      ${overviewHtml}
+    </section>
+    <section>
+      <h3 class="analytics-section-title">2. Decision Analysis</h3>
+      <table class="llm-table">
+        <thead><tr><th>Action</th><th>Count</th><th>Share</th></tr></thead>
+        <tbody>${actionRows || `<tr><td colspan="3">No decisions recorded.</td></tr>`}</tbody>
+      </table>
+      <p class="environment-tick">Average model latency: <strong>${decisions.avg_latency_ms} ms</strong> ·
+        fallbacks after failure/invalid output: <strong>${decisions.invalid_or_failed}</strong></p>
+      <h4 class="llm-subtitle">Important decision points</h4>
+      ${llmList(keyPoints, "No decision was taken while an agent was in a high or severe risk band.")}
+      <h4 class="llm-subtitle">Successful decisions</h4>
+      ${llmList(goodExamples, "None recorded.")}
+      <h4 class="llm-subtitle">Unsuccessful decisions</h4>
+      ${llmList(badExamples, "None recorded.")}
+    </section>
+    <section>
+      <h3 class="analytics-section-title">3. Risk Analysis</h3>
+      <p class="environment-tick">${risks.total_events} risk event(s), averaging ${risks.avg_duration_ticks || 0} tick(s).
+        Outcomes: ${(risks.outcome_counts || []).map((entry) => `<strong>${entry.outcome}</strong> ${entry.count}`).join(", ") || "none"}</p>
+      <ul class="analytics-list bottleneck">${riskEvents || "<li>No significant risk events were recorded.</li>"}</ul>
+    </section>
+    <section>
+      <h3 class="analytics-section-title">4. Agent Performance</h3>
+      <div class="llm-metric-grid">
+        ${statBlock("Risk avoidance", `${avoidance.avoidance_rate_percent}%`)}
+        ${statBlock("Avoided / reduced", `${avoidance.avoided} / ${avoidance.reduced}`)}
+        ${statBlock("Worsened / unresolved", `${avoidance.worsened} / ${avoidance.unresolved}`)}
+        ${statBlock("Avg response", `${response.avg_ticks_to_first_response} ticks`)}
+        ${statBlock("Route changes", `${route.total} (${route.successful} good, ${route.unnecessary} wasted)`)}
+        ${statBlock("Movement efficiency", `${efficiency.efficiency_percent}%`)}
+        ${statBlock("Decision consistency", `${consistency.consistency_percent}%`)}
+        ${statBlock("Oscillations", problematic.total_oscillation_events)}
+      </div>
+    </section>
+    <section>
+      <h3 class="analytics-section-title">5. Improvements / Enhancements</h3>
+      ${llmList(improvementItems, "No systemic weakness surfaced in this run.")}
+    </section>
+    <section>
+      <h3 class="analytics-section-title">6. Final Summary</h3>
+      <p><strong>What happened.</strong> ${summary.what_happened}</p>
+      <p><strong>How the agent behaved.</strong> ${summary.how_the_agent_behaved}</p>
+      <p><strong>How it responded to risk.</strong> ${summary.how_it_responded_to_risk}</p>
+      <h4 class="llm-subtitle">What worked well</h4>
+      ${llmList(summary.what_worked_well, "Nothing stood out.")}
+      <h4 class="llm-subtitle">What needs improvement</h4>
+      ${llmList(summary.what_needs_improvement, "No systemic weaknesses surfaced.")}
+      <h4 class="llm-subtitle">Recommended technical enhancements</h4>
+      ${llmList(summary.recommended_technical_enhancements, "None.")}
+      ${report.files?.markdown ? `<p class="environment-tick">Written to <code>${report.files.markdown}</code></p>` : ""}
+    </section>
+  `;
+}
+
+// Ask the backend to build (and persist) the after-action report.
+async function fetchAndRenderLlmReport(persist = true) {
+  const response = persist
+    ? await fetchJson("/api/analytics/simulation-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      })
+    : await fetchJson("/api/analytics/simulation-report");
+  renderLlmReport(response.report);
+  await refreshLlmStatus();
+}
+
+generateLlmReportButton?.addEventListener("click", async () => {
+  generateLlmReportButton.disabled = true;
+  const originalLabel = generateLlmReportButton.textContent;
+  generateLlmReportButton.textContent = "Generating…";
+  try {
+    await fetchAndRenderLlmReport(true);
+  } catch (error) {
+    if (llmReportBody) {
+      llmReportBody.innerHTML = `<p class="analytics-empty">Could not load the LLM report: ${error.message}</p>`;
+    }
+  } finally {
+    generateLlmReportButton.disabled = false;
+    generateLlmReportButton.textContent = originalLabel;
+  }
+});
+
+// Explain, in words, which layer actually chose this pilgrim's last action.
+function describeDecisionSource(source) {
+  return {
+    llm: "LLM (live model call)",
+    cache: "LLM (cached identical situation)",
+    rule_based: "Rule-based engine",
+    disabled: "Rule-based engine (LLM not configured)",
+    fallback_error: "Rule-based fallback (API call failed)",
+    fallback_invalid: "Rule-based fallback (model returned an invalid action)",
+    fallback_budget: "Rule-based fallback (per-tick LLM budget reached)"
+  }[source] || source || "Rule-based engine";
+}
+
 // Build a compact stat tile inside an agent card.
 function statBlock(label, value) {
   return `<div class="mini-stat"><span>${label}</span><strong>${value}</strong></div>`;
@@ -1679,6 +1921,11 @@ function openPilgrimDetailSidebar(agent) {
     detailBlock("Straggling", agent.state.is_straggling ? "Yes" : "No"),
     detailBlock("Ritual progress", `${completedRitualCount}/${ritualSchedule.length || 0} complete`),
     detailBlock("Last action", agent.state.last_action),
+    detailBlock("Decided by", describeDecisionSource(agent.state.last_decision_source)),
+    detailBlock("Decision reason", agent.state.last_decision_reason || "—"),
+    detailBlock("Rule-based fallback", agent.state.last_fallback_action || "—"),
+    detailBlock("Risk level", `${(agent.state.risk_level || "none").replaceAll("_", " ")} (${agent.state.risk_score ?? 0}/100)`),
+    detailBlock("Risk factors", (agent.state.risk_factors || []).join("; ") || "None detected"),
     detailBlock("Memory", (agent.memory.short_term.recent_nodes || []).join(", ") || "Fresh agent")
   ].join("");
 
@@ -1963,6 +2210,7 @@ async function refreshAll() {
   renderAgents(agents);
   renderChart(summaryHistory);
   applyEnvironmentForm(environmentResponse.environment);
+  await refreshLlmStatus();
 }
 
 // Advance the simulation by one ritual tick and refresh all UI panels.
@@ -1988,6 +2236,13 @@ async function runSimulationStep() {
       autoReportShownForRun = true;
       await fetchAndRenderAnalyticsReport();
       document.querySelector(".analytics-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // The backend writes the LLM after-action report to reports/ automatically
+    // at Hajj Complete; mirror it into the dashboard the same way.
+    if (!llmReportShownForRun && currentEnvironment?.current_ritual === "Hajj Complete") {
+      llmReportShownForRun = true;
+      await fetchAndRenderLlmReport(false);
     }
   } finally {
     simulationBusy = false;
@@ -2146,7 +2401,9 @@ resetDaysButton?.addEventListener("click", async () => {
   });
 
   autoReportShownForRun = false;
+  llmReportShownForRun = false;
   renderAnalyticsReport(null);
+  renderLlmReport(null);
   await refreshAll();
 });
 
@@ -2160,7 +2417,9 @@ restartDashboardButton?.addEventListener("click", async () => {
   });
 
   autoReportShownForRun = false;
+  llmReportShownForRun = false;
   renderAnalyticsReport(null);
+  renderLlmReport(null);
   resetManualDefaults();
   clearRosterFilters();
   await refreshAll();

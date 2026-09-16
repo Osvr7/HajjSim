@@ -1305,3 +1305,113 @@ button:hover {
     height: 240px !important;
   }
 }
+
+/* ============================================================
+   LLM Agent Intelligence panel
+   ------------------------------------------------------------
+   Status strip for the decision layer plus the six-section
+   after-action report. Reuses the analytics panel's shell so the
+   two report panels read as one family.
+   ============================================================ */
+
+.llm-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.llm-badge {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.llm-badge-on {
+  color: #fff;
+  background: var(--brand);
+}
+
+.llm-badge-off {
+  color: var(--muted);
+  background: rgba(45, 92, 68, 0.1);
+  border: 1px dashed var(--line);
+}
+
+.llm-stat {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.llm-stat strong {
+  color: var(--ink);
+}
+
+.llm-stat.llm-error {
+  color: var(--alert);
+  flex-basis: 100%;
+  word-break: break-word;
+}
+
+.llm-muted {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.llm-subtitle {
+  margin: 14px 0 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.llm-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.llm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.llm-table th,
+.llm-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.llm-table th {
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.llm-table td:nth-child(2),
+.llm-table td:nth-child(3),
+.llm-table th:nth-child(2),
+.llm-table th:nth-child(3) {
+  text-align: right;
+  width: 80px;
+}
+
+.llm-table code,
+.llm-panel code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(45, 92, 68, 0.1);
+  font-size: 0.78rem;
+}

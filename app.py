@@ -7,6 +7,7 @@ environment, advance the simulation, and read operational metrics.
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,7 +24,15 @@ from hajj_agents import (
     get_ritual_schedule_payload,
     NODE_CAPACITY_BASELINES,
     DEFAULT_NODE_CAPACITY,
+    SIGNIFICANT_RISK_LEVELS,
 )
+
+# The LLM decision layer, its structured log, and the after-action report are
+# each self-contained modules so the model can be swapped without touching the
+# simulation or this HTTP layer.
+from llm_decision import LLMDecisionEngine, llm_decide_action
+from simulation_log import DecisionRecord, SimulationLog, TickRecord
+from analysis_report import build_simulation_report, render_markdown, write_report
 from hajj_units import (
     ConvoyDispatchCoordinator,
     HamlahRegistry,
@@ -177,7 +186,7 @@ class AgentRepository:
         for record in records:
             # Each saved JSON record is converted back into the full four-layer
             # PilgrimAgent object used by the simulation.
-            agent = build_agent_from_record(record)
+            agent = build_agent_from_record(record, llm_override=llm_pilgrim_override)
             self.agents[agent.profile.pilgrim_id] = agent
             digits = "".join(char for char in agent.profile.pilgrim_id if char.isdigit())
             if digits:
@@ -226,6 +235,7 @@ class AgentRepository:
             risk_tolerance=float(payload.get("risk_tolerance", 0.5)),
             performs_sacrifice=self._parse_bool(payload.get("performs_sacrifice", True)),
             hamlah_id=hamlah_id,
+            llm_override=llm_pilgrim_override,
         )
         self.agents[agent.profile.pilgrim_id] = agent
         self._advance_index(agent.profile.pilgrim_id)
@@ -238,24 +248,42 @@ class AgentRepository:
         every generated agent's Hamlah always matches its own nationality.
         """
         generated = self.factory.generate_agents(
-            count=count, start_index=self._next_index, nationality_to_hamlah=nationality_to_hamlah,
+            count=count,
+            start_index=self._next_index,
+            nationality_to_hamlah=nationality_to_hamlah,
+            llm_override=llm_pilgrim_override,
         )
         self.agents.update(generated)
         self._next_index += count
         return [agent.get_snapshot() for agent in generated.values()]
 
-    def step_all(self, environment_data: dict, hamlah_dispatch_offsets: dict | None = None) -> list[dict]:
-        """Advance every agent once and return the action each agent selected."""
+    def step_all(
+        self,
+        environment_data: dict,
+        hamlah_dispatch_offsets: dict | None = None,
+        post_step_hook=None,
+    ) -> list[dict]:
+        """Advance every agent once and return the action each agent selected.
+
+        ``post_step_hook(agent, action, environment)`` runs immediately after an
+        agent's action has executed, which is where the LLM decision log records
+        what the decision actually did to the world.
+        """
         # Build group-location context first so every agent can decide whether
         # it is still near the majority of its group.
         group_locations = {}
+        # Live occupancy per node: the LLM observation needs real congestion
+        # numbers, not just the global density slider.
+        node_counts: dict[str, int] = {}
         for agent in self.agents.values():
             group_locations.setdefault(agent.profile.group_id, []).append(agent.state.current_node)
+            node_counts[agent.state.current_node] = node_counts.get(agent.state.current_node, 0) + 1
 
         # Add shared social/campaign context to the environment without
         # mutating the caller's original payload.
         step_environment = dict(environment_data)
         step_environment["group_locations"] = group_locations
+        step_environment["node_counts"] = node_counts
         step_environment["hamlah_dispatch_offsets"] = hamlah_dispatch_offsets or {}
 
         # Run the full perceive-decide-act cycle for the active roster.
@@ -263,6 +291,8 @@ class AgentRepository:
         for agent in self.agents.values():
             action = agent.step(step_environment)
             actions.append({"pilgrim_id": agent.profile.pilgrim_id, "action": action})
+            if post_step_hook is not None:
+                post_step_hook(agent, action, step_environment)
         return actions
 
     def reset_ritual_days(self) -> None:
@@ -353,6 +383,174 @@ def derive_operational_status(agent: dict) -> str:
     return "stable"
 
 
+# ============================================================
+# LLM decision layer wiring
+# ------------------------------------------------------------
+# The pilgrim agents already exposed a BehaviorEngine.llm_override hook; this
+# section finally supplies a real callable for it. The rule-based ladder still
+# runs first every tick and its result is handed to the model as the safe
+# fallback, so a failed call, a timeout or a hallucinated action degrades to
+# exactly the behavior the simulation had before.
+# ============================================================
+
+LLM_ENGINE = LLMDecisionEngine()
+SIMULATION_LOG = SimulationLog()
+REPORTS_DIR = BASE_DIR / "reports"
+LAST_REPORT_PATHS: dict = {}
+
+# Which pilgrims are model-driven this run (see LLM_MAX_AGENTS in the README).
+LLM_AGENT_IDS: set = set()
+
+
+def refresh_llm_agent_selection(agent_ids) -> set:
+    """Pick the deterministic subset of pilgrims the LLM drives.
+
+    A full run is 240 ticks; driving every pilgrim with a live model call would
+    mean six-figure API calls. LLM_MAX_AGENTS caps it (0 = the whole roster),
+    and the selection is the lowest pilgrim ids so a demo always shows the same
+    agents and a re-run is comparable.
+    """
+    global LLM_AGENT_IDS
+    max_agents = LLM_ENGINE.settings.max_agents
+    ordered = sorted(agent_ids)
+    LLM_AGENT_IDS = set(ordered) if max_agents <= 0 else set(ordered[:max_agents])
+    return LLM_AGENT_IDS
+
+
+def is_llm_driven(pilgrim_id: str) -> bool:
+    """True when this pilgrim's action should come from the model this tick."""
+    if not LLM_ENGINE.is_active:
+        return False
+    if LLM_ENGINE.settings.max_agents <= 0:
+        return True
+    return pilgrim_id in LLM_AGENT_IDS
+
+
+def _risk_environment_snapshot(agent, environment_data: dict, observation: dict) -> dict:
+    """Compact environment picture stored alongside a risk event."""
+    location = observation.get("location", {})
+    return {
+        "crowd_density": observation.get("conditions", {}).get("crowd_density_0_to_10"),
+        "temperature_c": observation.get("conditions", {}).get("temperature_c"),
+        "hazard": observation.get("conditions", {}).get("hazard"),
+        "occupancy": location.get("occupancy"),
+        "capacity": location.get("capacity"),
+        "congestion": location.get("congestion"),
+        "zone": location.get("zone"),
+        "current_ritual": environment_data.get("current_ritual"),
+        "target_node": agent.state.target_node,
+        "travel_state": agent.state.travel_state,
+        "vitals": observation.get("vitals", {}),
+    }
+
+
+def llm_pilgrim_override(agent, environment_data: dict, proposed_action: str):
+    """``BehaviorEngine.llm_override`` implementation: the LLM picks the action.
+
+    Returns the chosen action string, or ``None`` to leave the rule-based
+    decision in place (when the pilgrim is not model-driven, or when the convoy
+    coordinator owns it this tick and there is no real choice to make).
+    """
+    pilgrim_id = agent.profile.pilgrim_id
+    if not is_llm_driven(pilgrim_id):
+        return None
+
+    # Build the two halves of the contract: what the agent can see, and what
+    # the engine is actually able to execute for it right now.
+    available_actions = agent.available_actions(environment_data)
+    if len(available_actions) == 1 and available_actions[0].get("kind") == "locked":
+        # Boarded on a bus or queued for one -- not a decision, don't spend a call.
+        return None
+
+    state = agent.state
+    observation = agent.build_observation(environment_data)
+    simulated_time = str(environment_data.get("simulated_time_label") or "")
+
+    # Risk events are tracked before the decision, so the event records the
+    # situation the model was reacting to rather than its aftermath.
+    SIMULATION_LOG.observe_risk(
+        pilgrim_id=pilgrim_id,
+        tick=state.simulation_tick,
+        simulated_time=simulated_time,
+        location=state.current_node,
+        risk={
+            "level": state.risk_level,
+            "score": state.risk_score,
+            "factors": list(state.risk_factors),
+            "hazard": observation.get("conditions", {}).get("hazard"),
+        },
+        environment=_risk_environment_snapshot(agent, environment_data, observation),
+        significant_levels=frozenset(SIGNIFICANT_RISK_LEVELS),
+    )
+
+    decision = llm_decide_action(
+        environment_state=observation,
+        available_actions=available_actions,
+        fallback_action=proposed_action,
+        engine=LLM_ENGINE,
+    )
+
+    action_kind = next(
+        (entry.get("kind", "") for entry in available_actions if entry.get("action") == decision.action),
+        "",
+    )
+
+    # Provenance lands on the agent so the dashboard sidebar can show who chose.
+    state.last_decision_source = decision.source
+    state.last_decision_reason = decision.reason
+    state.last_fallback_action = decision.fallback_action or proposed_action
+
+    SIMULATION_LOG.open_decision(DecisionRecord(
+        tick=state.simulation_tick,
+        simulated_time=simulated_time,
+        pilgrim_id=pilgrim_id,
+        location=state.current_node,
+        zone=observation.get("location", {}).get("zone", ""),
+        target_node=state.target_node,
+        risk_level=state.risk_level,
+        risk_score=state.risk_score,
+        risk_factors=list(state.risk_factors),
+        hazard=observation.get("conditions", {}).get("hazard"),
+        crowd_density=observation.get("conditions", {}).get("crowd_density_0_to_10", 0.0),
+        temperature_c=observation.get("conditions", {}).get("temperature_c", 0.0),
+        congestion_ratio=observation.get("location", {}).get("congestion_ratio", 0.0),
+        available_actions=[entry["action"] for entry in available_actions],
+        action=decision.action,
+        action_kind=action_kind,
+        distance_hops=observation.get("ritual", {}).get("distance_hops", 0),
+        reason=decision.reason,
+        source=decision.source,
+        fallback_action=decision.fallback_action,
+        error=decision.error,
+        latency_ms=decision.latency_ms,
+        provider=decision.provider,
+        model=decision.model,
+        _stress_before=state.stress,
+        _fatigue_before=state.fatigue,
+        _hydration_before=state.hydration,
+    ))
+    return decision.action
+
+
+def finalize_agent_decision(agent, action: str, environment_data: dict) -> None:
+    """Close this pilgrim's pending decision record with the post-action result.
+
+    Called by ``AgentRepository.step_all`` immediately after the action has
+    executed, so the log captures what the decision actually did to the world:
+    where the pilgrim ended up and how its risk and vitals moved.
+    """
+    risk_after = agent.assess_risk(environment_data)
+    SIMULATION_LOG.close_decision(
+        pilgrim_id=agent.profile.pilgrim_id,
+        resulting_node=agent.state.current_node,
+        risk_level_after=risk_after["level"],
+        risk_score_after=risk_after["score"],
+        stress_after=agent.state.stress,
+        fatigue_after=agent.state.fatigue,
+        hydration_after=agent.state.hydration,
+    )
+
+
 # Global simulation session state used by the HTTP handler.
 REPOSITORY = AgentRepository(DATA_FILE)
 HAMLAH_REGISTRY = HamlahRegistry(HAMLAH_DATA_FILE)
@@ -390,6 +588,9 @@ def build_hamlah_hotel_map() -> dict:
 
 sync_hamlah_membership()
 sync_hotel_occupancy()
+# Decide up front which pilgrims the model drives, so /api/llm/status is
+# informative before the first simulation step is taken.
+refresh_llm_agent_selection(REPOSITORY.agents.keys())
 
 
 def build_summary_snapshot() -> dict:
@@ -698,6 +899,81 @@ def generate_analytics_report(history: list[dict], deployment_log: list[dict] | 
     }
 
 
+# ============================================================
+# LLM run logging and the automatic after-action report
+# ============================================================
+
+def count_agents_at_risk() -> int:
+    """How many pilgrims are currently in a high/severe risk band."""
+    return sum(
+        1 for agent in REPOSITORY.agents.values()
+        if agent.state.risk_level in SIGNIFICANT_RISK_LEVELS
+    )
+
+
+def record_simulation_tick(summary: dict, new_decisions: list) -> None:
+    """Append one aggregate row to the simulation log for the tick just run."""
+    llm_decisions = sum(1 for record in new_decisions if record.source in {"llm", "cache"})
+    SIMULATION_LOG.record_tick(TickRecord(
+        tick=summary.get("simulation_tick", 0),
+        simulated_time=ENVIRONMENT.to_dict().get("simulated_time_label", ""),
+        day_label=summary.get("simulation_day_label", ""),
+        current_ritual=summary.get("current_ritual", ""),
+        total_agents=summary.get("total_agents", 0),
+        severity_index=summary.get("severity_index", 0.0),
+        avg_stress=summary.get("avg_stress", 0.0),
+        avg_fatigue=summary.get("avg_fatigue", 0.0),
+        avg_hydration=summary.get("avg_hydration", 0.0),
+        panicking_agents=summary.get("panicking_agents", 0),
+        hazard=None if ENVIRONMENT.hazard == "none" else ENVIRONMENT.hazard,
+        crowd_density=ENVIRONMENT.density,
+        temperature_c=ENVIRONMENT.temperature,
+        risks_detected=count_agents_at_risk(),
+        decisions_logged=len(new_decisions),
+        llm_decisions=llm_decisions,
+        fallback_decisions=len(new_decisions) - llm_decisions,
+    ))
+
+
+def build_llm_simulation_report(write_to_disk: bool = False) -> dict:
+    """Build the six-section after-action report from the recorded run log."""
+    report = build_simulation_report(
+        log=SIMULATION_LOG,
+        history=SUMMARY_HISTORY,
+        llm_status=LLM_ENGINE.status_payload(),
+    )
+    if write_to_disk and report.get("has_data"):
+        stamp = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+        LAST_REPORT_PATHS.update(write_report(report, REPORTS_DIR, basename=stamp))
+        SIMULATION_LOG.write_json(REPORTS_DIR / f"{stamp}_log.json")
+        LAST_REPORT_PATHS["log"] = str(REPORTS_DIR / f"{stamp}_log.json")
+    report["files"] = dict(LAST_REPORT_PATHS)
+    return report
+
+
+def maybe_finalize_run(summary: dict) -> dict | None:
+    """Auto-generate the report the moment the ritual schedule is complete.
+
+    "Hajj Complete" is the same end-of-run signal the dashboard timeline uses,
+    so the report lands exactly once, without the operator having to ask.
+    """
+    if summary.get("current_ritual") != "Hajj Complete":
+        return None
+    if SIMULATION_LOG.run_completed:
+        return None
+    SIMULATION_LOG.mark_finished()
+    report = build_llm_simulation_report(write_to_disk=True)
+    print(f"Simulation complete -- analytical report written to {LAST_REPORT_PATHS.get('markdown')}")
+    return report
+
+
+def reset_llm_run_state() -> None:
+    """Clear the decision log, risk events and model counters for a fresh run."""
+    SIMULATION_LOG.reset()
+    LLM_ENGINE.reset()
+    LAST_REPORT_PATHS.clear()
+
+
 def reset_dashboard_state() -> dict:
     """Reset both environment and agents to the initial loaded project state."""
     ENVIRONMENT.reset()
@@ -705,6 +981,7 @@ def reset_dashboard_state() -> dict:
     sync_hamlah_membership()
     sync_hotel_occupancy()
     DEPLOYMENT_LOG.clear()
+    reset_llm_run_state()
     UNIT_REPOSITORY.spawn_default_fleet()
     SUMMARY_HISTORY.clear()
     return update_summary_history()
@@ -752,6 +1029,41 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/analytics/report":
             self._send_json({"report": generate_analytics_report(SUMMARY_HISTORY, DEPLOYMENT_LOG)})
+            return
+        if parsed.path == "/api/llm/status":
+            # Configuration + live counters; never exposes the API key itself.
+            self._send_json({"llm": LLM_ENGINE.status_payload(), "llm_agent_ids": sorted(LLM_AGENT_IDS)})
+            return
+        if parsed.path == "/api/logs/decisions":
+            limit = int((parse_qs(parsed.query).get("limit") or ["200"])[0])
+            records = SIMULATION_LOG.decisions[-max(1, min(2000, limit)):]
+            self._send_json({
+                "decisions": [record.to_payload() for record in records],
+                "total": len(SIMULATION_LOG.decisions),
+            })
+            return
+        if parsed.path == "/api/logs/risks":
+            self._send_json({
+                "risk_events": [event.to_payload() for event in SIMULATION_LOG.risk_events],
+                "total": len(SIMULATION_LOG.risk_events),
+            })
+            return
+        if parsed.path == "/api/logs/simulation":
+            self._send_json({"log": SIMULATION_LOG.to_payload()})
+            return
+        if parsed.path == "/api/analytics/simulation-report":
+            # Read-only: the report the run has produced so far.
+            self._send_json({"report": build_llm_simulation_report(write_to_disk=False)})
+            return
+        if parsed.path == "/api/analytics/simulation-report.md":
+            # Same report as Markdown, for copy/paste into a write-up.
+            markdown = render_markdown(build_llm_simulation_report(write_to_disk=False))
+            body = markdown.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if parsed.path in ("/", "/index.html"):
             # The root URL serves the dashboard HTML from the web directory.
@@ -816,18 +1128,33 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             ENVIRONMENT.apply_updates(payload)
             environment_payload = ENVIRONMENT.to_payload()
             environment_payload["hamlah_hotel_map"] = build_hamlah_hotel_map()
-            actions = REPOSITORY.step_all(environment_payload, HAMLAH_REGISTRY.get_dispatch_offsets())
+            # Reset the model's per-tick call budget and refresh which pilgrims
+            # it drives, then log everything this tick produces.
+            LLM_ENGINE.begin_tick(ENVIRONMENT.tick + 1)
+            refresh_llm_agent_selection(REPOSITORY.agents.keys())
+            decisions_before = len(SIMULATION_LOG.decisions)
+            actions = REPOSITORY.step_all(
+                environment_payload,
+                HAMLAH_REGISTRY.get_dispatch_offsets(),
+                post_step_hook=finalize_agent_decision,
+            )
             CONVOY_COORDINATOR.step(REPOSITORY.agents, UNIT_REPOSITORY.units, ENVIRONMENT.tick + 1)
             UNIT_REPOSITORY.step_all(environment_payload, REPOSITORY.list_agents())
             sync_hotel_occupancy()
             ENVIRONMENT.tick += 1
             summary = update_summary_history()
+            new_decisions = SIMULATION_LOG.decisions[decisions_before:]
+            record_simulation_tick(summary, new_decisions)
+            auto_report = maybe_finalize_run(summary)
             self._send_json(
                 {
                     "environment": ENVIRONMENT.to_dict(),
                     "actions": actions,
                     "summary": summary,
                     "history": SUMMARY_HISTORY,
+                    "llm": LLM_ENGINE.status_payload(),
+                    "llm_decisions": [record.to_payload() for record in new_decisions],
+                    "simulation_report": auto_report,
                 }
             )
             return
@@ -842,6 +1169,7 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
             UNIT_REPOSITORY.spawn_default_fleet()
             sync_hotel_occupancy()
             DEPLOYMENT_LOG.clear()
+            reset_llm_run_state()
             summary = update_summary_history()
             self._send_json(
                 {
@@ -850,6 +1178,19 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
                     "history": SUMMARY_HISTORY,
                 }
             )
+            return
+
+        if parsed.path == "/api/analytics/simulation-report":
+            # Force-generate the after-action report and write it to reports/.
+            report = build_llm_simulation_report(write_to_disk=True)
+            self._send_json({"report": report, "files": report.get("files", {})})
+            return
+
+        if parsed.path == "/api/llm/reload":
+            # Re-read LLM_* environment variables without restarting the server.
+            LLM_ENGINE.reload_settings()
+            refresh_llm_agent_selection(REPOSITORY.agents.keys())
+            self._send_json({"llm": LLM_ENGINE.status_payload()})
             return
 
         if parsed.path == "/api/dashboard/reset":

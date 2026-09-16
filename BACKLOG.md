@@ -1,6 +1,6 @@
 # MANSAK / HajjSim — Feature Backlog (Single Source of Truth)
 
-_Last verified against the codebase: 2026-09-15._
+_Last verified against the codebase: 2026-09-16._
 
 This is the canonical status list for every feature promised anywhere for this project — the README, the course pitch deck's "Future Plan" roadmap slide, the two implemented upgrade rounds, and the MiroFish-inspired adoption ideas — consolidated into one table per source. Every status below was verified by reading the actual code (not just recalled from a plan or a chat), but **it will drift the moment the code changes again without this file being refreshed.** Treat a "Done" row as a claim, not a guarantee — re-check the cited evidence (file/function names) before relying on it for something important.
 
@@ -46,13 +46,32 @@ This is the canonical status list for every feature promised anywhere for this p
 | 3.11 | Graphical Data Representation (bar charts) | ✅ Done | `renderBottleneckChart()`, `renderDeploymentImpactChart()` (Chart.js) | |
 | 3.12 | Dynamic Response Tracking (deployment before/after impact) | ✅ Done | `evaluate_deployment_impact()` | Deployed a police unit mid-run, saw a real before/after ratio in the chart and narrative. |
 
+## 3b. Round 3 upgrade (2026-09-16) — LLM decision layer
+
+| # | Feature | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 3b.1 | LLM chooses the pedestrian action each step | ✅ Done | `llm_decision.py`: `llm_decide_action()`; `app.py`: `llm_pilgrim_override()` wired into `build_agent_from_record`/`generate_agents`/`build_manual_agent` | Rule ladder runs first and is passed in as the fallback, so the model *replaces* the decision rather than bypassing the engine. |
+| 3b.2 | Environment → prompt conversion | ✅ Done | `PilgrimAgent.build_observation()`; `llm_decision.build_decision_prompt()` | Location, zone, connected roads, per-destination hop distance and bus requirement, live occupancy/capacity + congestion label, hazard with plain-language description, risk level/score/factors, vitals, group state, recent nodes/events/repeated visits. |
+| 3b.3 | Action catalogue restricted to executable actions | ✅ Done | `PilgrimAgent.available_actions()` | Every entry maps to a real branch of `_execute_action()`. Convoy-owned states (`IN_TRANSIT`, queued `AWAITING_TRANSPORT`) collapse to one locked entry and skip the API call entirely. |
+| 3b.4 | Structured JSON output + action validation | ✅ Done | `parse_llm_decision()` | Tolerates fences, leading prose and bare strings; rejects any action outside `available_actions`. 9 parser cases verified. |
+| 3b.5 | Error handling and safe fallback | ✅ Done | `LLMDecisionEngine.decide()` — sources `fallback_error` / `fallback_invalid` / `fallback_budget` / `disabled` | Verified against injected HTTP 401, an unexpected `ZeroDivisionError`, a hallucinated action, an empty action set, a missing key, and budget exhaustion. The simulation never raises. |
+| 3b.6 | Modular / swappable provider layer | ✅ Done | `BaseLLMProvider` + `PROVIDERS` + `register_provider()`; Gemini, OpenAI-compatible, Anthropic, and an offline `echo` provider | Stdlib `urllib` only — no new dependency. Swapping models is one env var. |
+| 3b.7 | API key handling | ✅ Done | `LLMSettings.from_env()` reads `LLM_API_KEY` only; `.env` + `reports/` git-ignored; `status_payload()` reports `api_key_present` but never the value | No key is ever written to source, disk, log, or API response. |
+| 3b.8 | Explicit risk model | ✅ Done | `assess_risk()`, `HAZARD_RISK_WEIGHTS`, `classify_risk_level()`, `SIGNIFICANT_RISK_LEVELS` | 0-100 score with named contributing factors, computed every tick right after perception, before the decision. |
+| 3b.9 | Decision logging | ✅ Done | `simulation_log.DecisionRecord`, opened pre-execution and closed post-execution by `finalize_agent_decision` | Records what was seen, what was offered, what was chosen, why, by which source, and the resulting node + risk/vitals deltas. |
+| 3b.10 | Risk-event logging | ✅ Done | `simulation_log.RiskEvent`, `observe_risk()` / `_close_risk()` | A lifecycle, not a point: opens on entry to a high/severe band, accumulates the decisions taken while open, closes with an `avoided`/`reduced`/`unchanged`/`worsened` verdict. |
+| 3b.11 | Automatic six-section analytical report | ✅ Done | `analysis_report.build_simulation_report()` / `render_markdown()`; `maybe_finalize_run()` fires at "Hajj Complete" | Written to `reports/` as Markdown + JSON plus the raw log. Verified end-to-end on a 239-tick run producing 8,673 decisions and 794 risk events. |
+| 3b.12 | Dashboard surface | ✅ Done | `web/index.html` LLM Agent Intelligence panel; `renderLlmStatus()` / `renderLlmReport()`; pilgrim sidebar decision fields | Status strip (live/inactive, calls, cache hits, failures, latency), all six report sections, and per-pilgrim *Decided by / Decision reason / Rule-based fallback / Risk level / Risk factors*. |
+| 3b.13 | Cost / volume control | ✅ Done | `LLM_MAX_AGENTS`, `LLM_MAX_CALLS_PER_TICK`, `LLM_CACHE_ENABLED`; `refresh_llm_agent_selection()` | Necessary, not cosmetic: a 240-tick run over the full roster would otherwise mean six-figure API calls. Defaults keep a demo in the low hundreds. |
+| 3b.14 | Verified against a real paid API | ⚠️ Not verified | Gemini/OpenAI/Anthropic request shapes written from their documented REST contracts; only the offline `echo` provider has actually been run | **The same caveat as §3.10.** Every code path around the call is verified, but no live key has been used. Confirm the model name and response shape on first real run. |
+
 ## 4. Official course "Future Plan" roadmap (`Documents/HajjSim_Agent_Studio_Presentation.pdf`, slide 8)
 
 This slide is the team's own stated next-stage roadmap — distinct from, and mostly not covered by, Rounds 1-2 above.
 
 | # | Feature (as promised on the slide) | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 4.1 | **Leader Agents** — guide groups, keep members together, share instructions | 🟡 Partial (data only) | `Memory.social.leader_id` is assigned per group (`_link_social_groups`) | Write-only: `leader_id` is never read anywhere to influence movement/decisions. No agent actually "leads" — it's an unused label. |
+| 4.1 | **Leader Agents** — guide groups, keep members together, share instructions | 🟡 Partial (data only) | `Memory.social.leader_id` is assigned per group (`_link_social_groups`); now surfaced in `build_observation()` under `group.leader_id` | Still not a leader: no agent's action is influenced by being or having a leader. The id is now *visible to the model in the prompt*, which is a prerequisite for real leader behaviour, not the behaviour itself. |
 | 4.2 | **Transportation Agents** — buses, shuttles, delays, movement between sites | ✅ Done | Round 2 §3.4-3.7 | Fully delivered by Round 2's convoy system. |
 | 4.3 | **Housing Agents** — camps, hotels, room flow, accommodation pressure | ✅ Done | Round 2 §3.2 | Fully delivered by Round 2's Hotel system. |
 | 4.4 | **Agent Communication** — share warnings, route updates, help requests | ⬜ Not started | `Memory.social.help_contacts` exists but is a static seeded list (`["Medical_Desk_1"]`), never dynamically updated; no message-passing between agents anywhere | Real gap: no agent ever sends/receives anything from another agent. |
@@ -62,16 +81,19 @@ This slide is the team's own stated next-stage roadmap — distinct from, and mo
 
 | # | Idea | Status | Evidence | Notes |
 |---|---|---|---|---|
-| 5.1 | Wire up the `llm_override` hook for LLM-driven pilgrim decisions | ⬜ Not started | `BehaviorEngine.llm_override`/`_apply_llm_override()` fully plumbed through every constructor, but `app.py` never passes a real callable | The hook is real and ready to receive a function; nothing calls it. |
+| 5.1 | Wire up the `llm_override` hook for LLM-driven pilgrim decisions | ✅ Done | `app.py`: `llm_pilgrim_override()` is passed into every agent factory path; `llm_decision.py` | Delivered by Round 3 (see §3b). The rule ladder still runs first and is handed to the model as the fallback, so behaviour with `LLM_ENABLED=0` is byte-for-byte the old behaviour. |
 | 5.2 | Upgrade plain BFS `ROUTE_GRAPH` to real GraphRAG retrieval | ⬜ Not started | `plan_route()` is textbook BFS over a static adjacency dict | No embeddings, no retrieval, no knowledge graph — despite "digital twin" framing implying more. |
-| 5.3 | Richer hazard-informed memory (past hazards shape future routing) | 🟡 Partial (write-only) | `Memory.long_term.known_hazards[node] = hazard` is written on perceive (`hajj_agents.py`) but never read back anywhere to avoid a hazardous node or bias a route choice | Same write-only pattern as `leader_id` (§4.1) — data capture without behavioral use. |
+| 5.3 | Richer hazard-informed memory (past hazards shape future routing) | 🟡 Partial (read by the LLM only) | `build_observation()` now emits `history.remembered_hazards` and `location.known_hazard_here`; `_describe_node()` emits `known_hazard_there` per candidate | No longer purely write-only: an LLM-driven pilgrim sees its remembered hazards and can route around them. The **rule-based** ladder still never reads `known_hazards`, so with `LLM_ENABLED=0` this remains write-only. |
 | 5.4 | ReportAgent-style automated narrative report | ✅ Done | Round 2 §3.10 (`generate_narrative_via_llm`/`_template_narrative`) | This is the one MiroFish idea Round 2 actually delivered. |
-| 5.5 | Deep/interactive drill-in on one pilgrim's *reasoning* | 🟡 Partial | `openPilgrimDetailSidebar()` shows full profile/state/memory snapshot | Shows *what* the agent's state is, not *why* it chose its last action — decisions are rule-based with no explanation trace to surface. |
+| 5.5 | Deep/interactive drill-in on one pilgrim's *reasoning* | ✅ Done (for LLM-driven agents) | `openPilgrimDetailSidebar()` now shows *Decided by*, *Decision reason*, *Rule-based fallback*, *Risk level* and *Risk factors* | The model returns a one-sentence reason with every action, so the sidebar shows why, what the rule engine would have done instead, and the risk picture that drove it. A rule-based agent still has no explanation trace (there is nothing to explain — the ladder is deterministic). |
 | 5.6 | Keep the simulation core open/auditable (B2G trust) | ✅ Done (by construction) | Entire stack is a stdlib Python server + vanilla JS, no closed-source dependency, no external calls unless `GEMINI_API_KEY` is deliberately set | Not a coded "feature" so much as an architectural property that already holds. |
 
 ## 6. Cross-cutting gaps and debt found during the last audit
 
-- **README is stale on tick semantics** (§1.2) — still describes "1 tick = 1 ritual stage," true only before Round 1.
+- **README is stale on tick semantics** (§1.2) — still describes "1 tick = 1 ritual stage," true only before Round 1. The rest of the README was rewritten in Round 3; this one line in Core Features was not.
+- **The LLM path has never met a real API** (§3b.14) — all four providers are written from documented REST contracts and every failure path is tested with injected faults, but the only provider actually exercised end-to-end is the offline `echo` stand-in. Treat the first live run as the real verification.
+- **Only a subset of pilgrims is model-driven by default** (`LLM_MAX_AGENTS=10`) — report figures like "movement efficiency" describe that subset, not the whole population. Set it to 0 for a whole-roster run, and expect the API bill to scale accordingly.
+- **Report quality depends on the model** — a full echo-provider run showed 44.8% movement efficiency and 3,286 oscillation events, but the echo provider is a fixed heuristic that always prefers a reroute. Those numbers measure the stand-in, not a real model; re-baseline them on the first live run.
 - **No aggregate Hamlah view** (§2.2) — `declared_pilgrim_count` vs `actual_pilgrim_count` is modeled but invisible to an operator.
 - **Two write-only memory fields** (`leader_id` §4.1, `known_hazards` §5.3) — data is captured every tick but never read back into any decision, making two "planned" features look implemented in the data model while doing nothing behaviorally. `learned_preferences` is similarly written in `_seed_memory` but not obviously read elsewhere — not yet fully audited.
 - **Two real movement-stall bugs**, found only by running a *full* simulation to "Hajj Complete" in the browser (not caught by short test runs or unit-level checks):

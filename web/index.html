@@ -392,6 +392,24 @@
       </div>
     </section>
 
+    <!-- LLM decision layer: live status of the model driving pilgrim decisions,
+         plus the six-section after-action report built from the recorded
+         decision log. The report is also written to reports/ automatically the
+         moment the run reaches Hajj Complete. -->
+    <section class="panel analytics-panel llm-panel">
+      <div class="panel-header">
+        <h2>LLM Agent Intelligence</h2>
+        <p>Every pedestrian decision the language model made this run, and what those decisions did to risk.</p>
+      </div>
+      <div id="llmStatusBar" class="llm-status-bar">
+        <span class="llm-badge llm-badge-off">Checking model status…</span>
+      </div>
+      <button id="generateLlmReportButton" class="accent-btn" type="button">Generate LLM Simulation Report</button>
+      <div id="llmReportBody" class="analytics-report-body">
+        <p class="analytics-empty">Advance the simulation, then generate the report to see decision analysis, risk outcomes, agent performance, and improvement suggestions.</p>
+      </div>
+    </section>
+
     <!-- Agent roster: searchable/filterable cards for individual pilgrim state. -->
     <section class="panel list-panel">
       <div class="panel-header">

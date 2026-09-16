@@ -4,8 +4,23 @@
     {
       "name": "hajjsim",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["app.py"],
+      "runtimeArgs": [
+        "app.py"
+      ],
       "port": 8000
+    },
+    {
+      "name": "hajjsim-llm-echo",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "app.py"
+      ],
+      "port": 8000,
+      "env": {
+        "LLM_PROVIDER": "echo",
+        "LLM_MAX_AGENTS": "0",
+        "LLM_MAX_CALLS_PER_TICK": "0"
+      }
     }
   ]
 }

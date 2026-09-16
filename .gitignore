@@ -48,3 +48,12 @@ npm-debug.log
 # Note: I left .vscode/ un-ignored because you already committed it. 
 # If you want to ignore VS Code settings in the future, remove the '#' below:
 # .vscode/
+# =========================
+# LLM decision layer
+# =========================
+# The API key lives in a local .env file that must never be committed.
+.env
+.env.*
+!.env.example
+# Generated run artifacts: after-action reports and raw decision logs.
+reports/
