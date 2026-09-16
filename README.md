@@ -209,6 +209,7 @@ Even with a working key, these are all expected and visible in the decision log'
 | `LLM_BASE_URL` | _(vendor)_ | Override for a self-hosted or proxied endpoint. |
 | `LLM_ENABLED` | `1` | Set to `0` to run the original rule-based agents. |
 | `LLM_MAX_AGENTS` | `10` | How many pilgrims the model drives. `0` = the entire roster. |
+| `LLM_DECISION_WORKERS` | `12` | How many decisions are made concurrently per tick. |
 | `LLM_MAX_CALLS_PER_TICK` | `40` | Hard ceiling on live API calls per tick. `0` = unlimited. |
 | `LLM_CACHE_ENABLED` | `1` | Reuse one answer across near-identical situations. |
 | `LLM_TIMEOUT_SECONDS` | `12` | Per-call timeout. |
@@ -219,8 +220,39 @@ Even with a working key, these are all expected and visible in the decision log'
 | `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
 
 > **Cost note.** A full run is ~240 ticks. With `LLM_MAX_AGENTS=0` and a large
-> roster that means a very large number of API calls. The defaults keep a demo
-> run in the low hundreds of calls; raise them deliberately.
+> roster that means a very large number of API calls. Raise the caps deliberately.
+
+### Getting 100% of decisions from the model
+
+Set `LLM_MAX_AGENTS=0` and `LLM_MAX_CALLS_PER_TICK=0` and every pilgrim that has
+a real choice to make will be decided by the model. Decisions within a tick run
+**in parallel** (`LLM_DECISION_WORKERS`), so a tick costs roughly one model
+latency rather than one per agent — measured with 12 agents against live Gemini:
+**1.86s per tick, 100% model decisions**, where sequential would have been ~20s.
+
+After that, the ceiling is your provider quota, not this code. The arithmetic
+for a full 239-tick run:
+
+| Roster | Decisions needed | vs. Gemini free tier (1,000/day) |
+| ---: | ---: | --- |
+| 3 agents | ~600 | fits in one day |
+| 10 agents | ~2,000 | 2 days, or a paid tier |
+| 43 agents | ~8,700 | 9 days, or a paid tier |
+
+So on the free tier, "100% of a complete run" is realistic for a **small roster**
+or a **short run**. With a bigger roster you get 100% until the daily quota runs
+out, then clean rule-based fallback. Three things stretch it:
+
+* **The situation cache.** Pilgrims in the same place, same risk band, same
+  option set reuse one answer. Those decisions are logged as `cache` — still the
+  model's reasoning, just not a second call for it.
+* **`LLM_MAX_REQUESTS_PER_MINUTE`.** Paces calls inside the per-minute limit
+  instead of collecting 429s.
+* **Locked pilgrims are free.** Anyone in transit or queued for a bus has no
+  real choice, so no call is made for them.
+
+None of the fallbacks are failures — check the `source` field to tell a
+quota-paced fallback (`fallback_rate_limit`) from a broken one (`fallback_error`).
 
 ### Trying it with no key at all
 

@@ -6,7 +6,9 @@ environment, advance the simulation, and read operational metrics.
 """
 
 import json
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
@@ -52,6 +54,11 @@ DATA_FILE = BASE_DIR / "pilgrims.json"
 HAMLAH_DATA_FILE = BASE_DIR / "hamlahs.json"
 HOTEL_DATA_FILE = BASE_DIR / "hotels.json"
 ENV_FILE = BASE_DIR / ".env"
+
+# How many pilgrim decisions may be in flight at once. Each one is a blocking
+# HTTP call, so this is what turns "agents x latency" per tick into roughly one
+# latency per tick. Keep it at or below the provider's concurrency comfort.
+LLM_DECISION_WORKERS = int(os.environ.get("LLM_DECISION_WORKERS") or 12)
 
 # Load .env before anything reads LLM_* settings. Variables already exported in
 # the real environment win, so this only fills in what the shell did not set.
@@ -293,14 +300,55 @@ class AgentRepository:
         step_environment["node_counts"] = node_counts
         step_environment["hamlah_dispatch_offsets"] = hamlah_dispatch_offsets or {}
 
-        # Run the full perceive-decide-act cycle for the active roster.
+        # Run the cycle in three phases rather than one agent at a time, so the
+        # decide phase -- the only one that blocks on a network call -- can run
+        # concurrently. Sequentially, a tick costs (agents x LLM latency); in
+        # parallel it costs roughly one LLM latency regardless of roster size,
+        # which is what makes driving the whole population practical.
+        roster = list(self.agents.values())
+
+        for agent in roster:
+            agent.perceive_phase(step_environment)
+
+        decisions = self._decide_all(roster, step_environment)
+
         actions = []
-        for agent in self.agents.values():
-            action = agent.step(step_environment)
+        for agent in roster:
+            action = decisions[agent.profile.pilgrim_id]
+            agent.act_phase(action, step_environment)
             actions.append({"pilgrim_id": agent.profile.pilgrim_id, "action": action})
             if post_step_hook is not None:
                 post_step_hook(agent, action, step_environment)
         return actions
+
+    def _decide_all(self, roster: list, step_environment: dict) -> dict:
+        """Collect every agent's decision, in parallel when that helps.
+
+        Only worth the thread pool when a live model is in play; with the
+        rule-based engine a decision is pure local computation and threads
+        would just add overhead.
+        """
+        if len(roster) < 2 or not LLM_ENGINE.is_active:
+            return {
+                agent.profile.pilgrim_id: agent.decide_phase(step_environment)
+                for agent in roster
+            }
+
+        workers = max(1, min(LLM_DECISION_WORKERS, len(roster)))
+        decisions: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="decide") as pool:
+            futures = {
+                pool.submit(agent.decide_phase, step_environment): agent
+                for agent in roster
+            }
+            for future in as_completed(futures):
+                agent = futures[future]
+                try:
+                    decisions[agent.profile.pilgrim_id] = future.result()
+                except Exception as error:  # noqa: BLE001 -- one agent must not stop the tick
+                    print(f"Decision failed for {agent.profile.pilgrim_id}: {error}")
+                    decisions[agent.profile.pilgrim_id] = "REST"
+        return decisions
 
     def reset_ritual_days(self) -> None:
         """Restart the ritual schedule while keeping the active agent roster."""

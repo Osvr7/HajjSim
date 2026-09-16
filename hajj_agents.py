@@ -1114,6 +1114,25 @@ class PilgrimAgent:
         """Run one full perceive-decide-act cycle for this pilgrim."""
         # One step updates ritual context, observes the environment, chooses an
         # action, executes it, and records any completed ritual.
+        self.perceive_phase(environment_data)
+        action = self.decide_phase(environment_data)
+        self.act_phase(action, environment_data)
+        return action
+
+    # ------------------------------------------------------------------
+    # The same cycle, split into its three phases.
+    #
+    # A caller that steps the whole population can run every agent's PERCEIVE,
+    # then every agent's DECIDE, then every agent's ACT -- which lets the decide
+    # phase be parallelised, because that is where a blocking LLM call happens.
+    # This is safe because agents are independent within a tick: shared context
+    # (group_locations, node_counts) is computed once before the tick, perceive
+    # reads only that plus the agent's own state, and act mutates only the
+    # agent's own state. Running the phases separately is in fact *more*
+    # internally consistent than interleaving them per agent.
+    # ------------------------------------------------------------------
+    def perceive_phase(self, environment_data: dict) -> None:
+        """Advance the clock, refresh ritual context, observe, and score risk."""
         self.state.simulation_tick += 1
         self._sync_ritual_goal(environment_data)
         self._mark_completed_rituals_before_current_tick(environment_data)
@@ -1121,11 +1140,16 @@ class PilgrimAgent:
         # Risk is scored before the decision so the LLM prompt, the risk-event
         # log and the after-action report all read the same numbers.
         self.assess_risk(environment_data)
-        action = self.brain.decide_action(environment_data)
+
+    def decide_phase(self, environment_data: dict) -> str:
+        """Choose this tick's action. Safe to call concurrently across agents."""
+        return self.brain.decide_action(environment_data)
+
+    def act_phase(self, action: str, environment_data: dict) -> None:
+        """Execute the chosen action and record any ritual it completed."""
         self._execute_action(action, environment_data)
         self._update_ritual_progress(environment_data)
         self._sync_ritual_goal(environment_data)
-        return action
 
     def reset_ritual_cycle(self) -> None:
         """Restart the ritual journey while preserving arrival registration."""
