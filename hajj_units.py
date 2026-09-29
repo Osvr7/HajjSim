@@ -16,12 +16,14 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 # One-way dependency only (hajj_agents.py never imports this module), so this
 # stays acyclic.
-from hajj_agents import corridor_minutes, corridor_ticks, next_hop_zone, zone_of
+from hajj_agents import SIMULATED_MINUTES_PER_TICK, corridor_minutes, corridor_ticks, next_hop_zone, zone_of
 
 # Successive Hamlahs (by seed order) start moving this many simulated minutes
 # apart, so campaigns dispatch in staggered waves instead of all at once.
-# Bumped from round 1's 30.0 now that a tick is 60 simulated minutes instead
-# of 20 -- a 30-minute stagger would otherwise be invisible (sub-tick).
+# Bumped from round 1's 30.0 when a tick was 60 simulated minutes. With
+# half-day ticks the stagger is sub-tick, but it still shifts each Hamlah's
+# clock, so waves reach windows at different ticks (every window is at least
+# a tick long, so no Hamlah can miss one).
 STAGGER_INTERVAL_MINUTES = 90.0
 
 
@@ -316,8 +318,13 @@ DEFAULT_BUS_CAPACITY = 40
 # A bus with fewer than MIN_RIDERS_TO_MOVE will still run if it has been
 # waiting this long AND has at least one rider, so a handful of pilgrims on a
 # quiet corridor are not stranded forever. Set to 0 to disable and enforce the
-# minimum absolutely.
-MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH = 6
+# minimum absolutely. Held in simulated minutes and converted to ticks, so a
+# half-day tick does not turn a six-hour hold into three days.
+MAX_WAIT_MINUTES_BEFORE_UNDERFULL_DISPATCH = 360
+MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH = (
+    max(1, -(-MAX_WAIT_MINUTES_BEFORE_UNDERFULL_DISPATCH // SIMULATED_MINUTES_PER_TICK))
+    if MAX_WAIT_MINUTES_BEFORE_UNDERFULL_DISPATCH > 0 else 0
+)
 
 # An EMPTY bus may reposition to the other end of its own route only when
 # riders are waiting there and no other bus on that route can serve them.
@@ -341,7 +348,7 @@ CORRIDOR_STOPS: Dict[Tuple[str, str], Tuple[str, str]] = {
 }
 
 # Bus decisions are logged line-by-line for traceability. Set BUS_LOG=0 to
-# silence it -- a 240-tick run with a full fleet is a lot of output.
+# silence it -- a full run with a full fleet is a lot of output.
 BUS_LOG_ENABLED = (os.environ.get("BUS_LOG") or "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
@@ -505,7 +512,7 @@ class BusUnit(OperationalUnit):
     Corridor buses (is_corridor_bus=True, the default) serve a fixed
     inter-city corridor as a shared fleet -- not owned by any Hamlah -- and
     are entirely driven by ConvoyDispatchCoordinator: it boards waiting
-    cohorts, advances transit_progress across multiple ticks, and disembarks
+    cohorts, advances transit_progress on a minute clock, and disembarks
     them on arrival. This class's own step() is a no-op for those buses.
 
     The one legacy bus (is_corridor_bus=False) keeps round 1's original
@@ -537,6 +544,10 @@ class BusUnit(OperationalUnit):
     transit_to_node: str = ""
     transit_ticks_required: int = 1
     transit_ticks_elapsed: int = 0
+    # The coordinator's clock: a leg lasts its corridor's minutes, which may
+    # end mid-tick (several short legs in one tick) or span several ticks.
+    transit_minutes_required: int = 0
+    transit_minutes_elapsed: int = 0
     transit_progress: float = 0.0
     direction_forward: bool = True
     idle_ticks_at_stop: int = 0
@@ -552,6 +563,21 @@ class BusUnit(OperationalUnit):
     def current_riders(self) -> int:
         """How many pilgrims are on board right now."""
         return len(self.manifest)
+
+    @property
+    def transit_minutes_remaining(self) -> int:
+        """Minutes left on the current leg (0 once it has arrived)."""
+        return max(0, self.transit_minutes_required - self.transit_minutes_elapsed)
+
+    def advance_transit(self, minutes: int) -> None:
+        """Move the current leg on by some simulated minutes."""
+        self.transit_minutes_elapsed = min(
+            self.transit_minutes_required, self.transit_minutes_elapsed + max(0, minutes)
+        )
+        self.transit_ticks_elapsed = -(-self.transit_minutes_elapsed // SIMULATED_MINUTES_PER_TICK)
+        self.transit_progress = (
+            self.transit_minutes_elapsed / self.transit_minutes_required if self.transit_minutes_required else 1.0
+        )
 
     @property
     def remaining_capacity(self) -> int:
@@ -720,15 +746,49 @@ class ConvoyDispatchCoordinator:
         self.routes.reset()
         self._unservable.clear()
 
-    def step(self, agents: Dict[str, object], units: Dict[str, "OperationalUnit"], tick: int) -> List[dict]:
-        """Advance every corridor bus one tick; returns a list of event dicts."""
-        buses = [unit for unit in units.values() if isinstance(unit, BusUnit) and unit.is_corridor_bus]
-        self._sync_routes(buses)
-        events = self._advance_transit_and_disembark(agents, buses)
-        demand = self._collect_demand(agents)
-        events += self._dispatch_from_stops(agents, buses, demand)
-        events += self._plan_routes_for_unmet_demand(demand, buses, units)
+    def step(
+        self,
+        agents: Dict[str, object],
+        units: Dict[str, "OperationalUnit"],
+        tick: int,
+        environment_data: Optional[dict] = None,
+    ) -> List[dict]:
+        """Run the corridor fleet through one tick; returns a list of event dicts.
+
+        Buses run on a minute clock inside the tick: a bus that arrives before
+        the tick's minutes are used up sets its riders down, and anyone still
+        short of their destination zone queues straight away for the next hop,
+        so a multi-leg trip that fits in the tick finishes in it. A leg that
+        does not fit carries its remaining minutes into the next tick.
+        """
+        events: List[dict] = []
+        clock = 0
+        first_pass = True
+        while True:
+            buses = self._corridor_buses(units)
+            self._sync_routes(buses)
+            demand = self._collect_demand(agents)
+            events += self._dispatch_from_stops(agents, buses, demand, count_wait=first_pass)
+            events += self._plan_routes_for_unmet_demand(demand, buses, units)
+            first_pass = False
+
+            moving = [bus for bus in self._corridor_buses(units) if bus.status == "in_transit"]
+            if not moving:
+                break
+            step_minutes = max(1, min(bus.transit_minutes_remaining for bus in moving))
+            if clock + step_minutes > SIMULATED_MINUTES_PER_TICK:
+                # Nobody arrives before the tick ends: bank the time and stop.
+                for bus in moving:
+                    bus.advance_transit(SIMULATED_MINUTES_PER_TICK - clock)
+                break
+            clock += step_minutes
+            events += self._advance_transit_and_disembark(agents, moving, step_minutes, environment_data)
         return events
+
+    @staticmethod
+    def _corridor_buses(units: Dict[str, "OperationalUnit"]) -> List["BusUnit"]:
+        """Every coordinator-owned bus, including any route planning just added."""
+        return [unit for unit in units.values() if isinstance(unit, BusUnit) and unit.is_corridor_bus]
 
     def _sync_routes(self, buses: List["BusUnit"]) -> None:
         """Make sure every bus's own route is registered and valid."""
@@ -747,14 +807,19 @@ class ConvoyDispatchCoordinator:
     # ------------------------------------------------------------------
     # Arrival
     # ------------------------------------------------------------------
-    def _advance_transit_and_disembark(self, agents: Dict[str, object], buses: List["BusUnit"]) -> List[dict]:
+    def _advance_transit_and_disembark(
+        self,
+        agents: Dict[str, object],
+        buses: List["BusUnit"],
+        minutes: int,
+        environment_data: Optional[dict] = None,
+    ) -> List[dict]:
         events: List[dict] = []
         for bus in buses:
             if bus.status != "in_transit":
                 continue
-            bus.transit_ticks_elapsed += 1
-            bus.transit_progress = min(1.0, bus.transit_ticks_elapsed / max(1, bus.transit_ticks_required))
-            if bus.transit_ticks_elapsed < bus.transit_ticks_required:
+            bus.advance_transit(minutes)
+            if bus.transit_minutes_remaining > 0:
                 bus.last_action = f"IN_TRANSIT_TO_{bus.transit_to_node}"
                 continue
 
@@ -771,8 +836,14 @@ class ConvoyDispatchCoordinator:
                 if agent is None:
                     continue
                 agent.state.current_node = arrival_node
-                agent.state.travel_state = "PEDESTRIAN"
                 agent.state.boarded_unit_id = None
+                if zone_of(arrival_node) != zone_of(agent.state.target_node):
+                    # Still short of the destination zone: stay with the
+                    # convoy and queue here for the next corridor hop.
+                    agent.state.travel_state = "AWAITING_TRANSPORT"
+                    continue
+                agent.state.travel_state = "PEDESTRIAN"
+                agent.arrive_by_bus(environment_data)
             if riders:
                 bus_log(f"{bus.unit_id}: arrived at {arrival_node}, {riders} rider(s) disembarked")
             events.append({
@@ -820,7 +891,13 @@ class ConvoyDispatchCoordinator:
         agents: Dict[str, object],
         buses: List["BusUnit"],
         demand: Dict[Tuple[str, str], List[object]],
+        count_wait: bool = True,
     ) -> List[dict]:
+        """Board queued riders and send off buses that should go.
+
+        ``count_wait`` is True only on a tick's first pass: the later passes
+        within the same tick must not count as extra ticks of holding.
+        """
         events: List[dict] = []
 
         for bus in buses:
@@ -868,8 +945,9 @@ class ConvoyDispatchCoordinator:
 
             # Under the minimum: hold. This is the core rule -- an under-filled
             # bus stays where it is.
-            bus.waiting_ticks += 1
-            bus.idle_ticks_at_stop += 1
+            if count_wait:
+                bus.waiting_ticks += 1
+                bus.idle_ticks_at_stop += 1
 
             if bus.current_riders > 0:
                 bus.status = "at_stop"
@@ -893,7 +971,8 @@ class ConvoyDispatchCoordinator:
 
             # Completely empty.
             bus.last_action = "AT_STOP_EMPTY"
-            bus_log(f"{bus.unit_id}: 0 riders -> staying stationary (minimum = {bus.min_riders_to_move})")
+            if count_wait:
+                bus_log(f"{bus.unit_id}: 0 riders -> staying stationary (minimum = {bus.min_riders_to_move})")
             if ALLOW_EMPTY_REPOSITIONING and self._should_reposition(bus, buses, demand, to_zone):
                 bus_log(
                     f"{bus.unit_id}: riders waiting at {to_node} with no bus there -> "
@@ -959,6 +1038,8 @@ class ConvoyDispatchCoordinator:
         bus.transit_to_node = to_node
         bus.transit_ticks_required = corridor_ticks(from_zone, to_zone)
         bus.transit_ticks_elapsed = 0
+        bus.transit_minutes_required = corridor_minutes(from_zone, to_zone) or 1
+        bus.transit_minutes_elapsed = 0
         bus.transit_progress = 0.0
         bus.target_node = to_node
         bus.idle_ticks_at_stop = 0
@@ -971,7 +1052,7 @@ class ConvoyDispatchCoordinator:
 
         bus_log(
             f"{bus.unit_id}: moving {from_node} -> {to_node} "
-            f"({bus.current_riders}/{bus.passenger_capacity} capacity, {bus.transit_ticks_required} tick(s))"
+            f"({bus.current_riders}/{bus.passenger_capacity} capacity, {bus.transit_minutes_required} min)"
         )
         events.append({
             "event": "bus_departed", "unit_id": bus.unit_id,

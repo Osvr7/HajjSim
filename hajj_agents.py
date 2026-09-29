@@ -25,7 +25,10 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 # than teleport straight to the next stage.
 # ============================================================
 
-SIMULATED_MINUTES_PER_TICK = 60
+# One tick = half a simulated day. Every ritual window below is at least this
+# long, so each window contains at least one tick for every Hamlah whatever
+# its dispatch stagger (a shorter window could fall entirely between ticks).
+SIMULATED_MINUTES_PER_TICK = 720
 MINUTES_PER_SIMULATED_DAY = 24 * 60
 
 
@@ -167,7 +170,7 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         progress_key="jamrat_aqaba_complete",
         description="Pilgrims perform the stoning at Jamrat al-Aqaba al-Kubra.",
         window_start_minute=6120,
-        window_end_minute=6300,
+        window_end_minute=6840,
     ),
     RitualStep(
         sequence_order=6,
@@ -177,8 +180,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Sacrifice_Zone",
         progress_key="sacrifice_complete",
         description="Pilgrims perform the sacrifice following the stoning ritual.",
-        window_start_minute=6300,
-        window_end_minute=6900,
+        window_start_minute=6840,
+        window_end_minute=7560,
     ),
     RitualStep(
         sequence_order=7,
@@ -188,8 +191,8 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         target_node="Tawaf_Area",
         progress_key="ifadhah_sai_complete",
         description="Pilgrims return to the Haram for Tawaf Al-Ifadhah and the Sa'y of Hajj.",
-        window_start_minute=6900,
-        window_end_minute=7380,
+        window_start_minute=7560,
+        window_end_minute=8400,
     ),
     RitualStep(
         sequence_order=8,
@@ -200,7 +203,7 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         progress_key="first_tashreeq_night_complete",
         description="Pilgrims return to Mina for the first Tashreeq night stay.",
         window_start_minute=8400,
-        window_end_minute=9000,
+        window_end_minute=9120,
     ),
     RitualStep(
         sequence_order=9,
@@ -211,7 +214,7 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         progress_key="mina_day_11_complete",
         description="Pilgrims remain in Mina on the 11th of Dhul-Hijjah.",
         window_start_minute=9360,
-        window_end_minute=9960,
+        window_end_minute=10080,
     ),
     RitualStep(
         sequence_order=10,
@@ -222,7 +225,7 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         progress_key="mina_day_12_complete",
         description="Pilgrims remain in Mina on the 12th of Dhul-Hijjah.",
         window_start_minute=10800,
-        window_end_minute=11400,
+        window_end_minute=11520,
     ),
     RitualStep(
         sequence_order=11,
@@ -233,7 +236,7 @@ HAJJ_RITUAL_SCHEDULE: Tuple[RitualStep, ...] = (
         progress_key="mina_day_13_complete",
         description="Pilgrims remain in Mina on the 13th of Dhul-Hijjah.",
         window_start_minute=12240,
-        window_end_minute=12840,
+        window_end_minute=12960,
     ),
     RitualStep(
         sequence_order=12,
@@ -732,6 +735,38 @@ def next_hop_zone(from_zone: str, to_zone: str) -> Optional[str]:
     return None
 
 
+def corridor_path_minutes(from_zone: str, to_zone: str) -> int:
+    """Total bus time along the corridor path between two zones (0 if the same)."""
+    minutes = 0
+    zone = from_zone
+    while zone != to_zone:
+        next_zone = next_hop_zone(zone, to_zone)
+        if next_zone is None:
+            break
+        minutes += corridor_minutes(zone, next_zone) or 0
+        zone = next_zone
+    return minutes
+
+
+def departure_lead_minutes(from_node: str, to_node: str) -> int:
+    """How long before a ritual window opens a pilgrim should set off for it.
+
+    The bus time to the site, rounded up to whole ticks: a pilgrim only acts
+    once per tick, so leaving any later would mean arriving after the window
+    has opened. Walking within a zone is instant, so a same-zone target needs
+    no head start.
+    """
+    minutes = corridor_path_minutes(zone_of(from_node), zone_of(to_node))
+    if minutes == 0:
+        return 0
+    return -(-minutes // SIMULATED_MINUTES_PER_TICK) * SIMULATED_MINUTES_PER_TICK
+
+
+# How long a straggler's detour lasts, in simulated minutes (converted to
+# ticks at the current tick length, so a coarse tick means a one-tick detour).
+STRAGGLE_MINUTES_RANGE: Tuple[int, int] = (60, 180)
+
+
 # ============================================================
 # 2c) Risk model and congestion labels
 # ------------------------------------------------------------
@@ -882,6 +917,13 @@ class DynamicState:
     next_ritual: str = "Tawaf Al-Qudoum (Arrival Tawaf)"
     next_ritual_day_label: str = "Upon Arrival in Jeddah"
     ritual_window_open: bool = False
+    # True from the moment the pilgrim should set off for the upcoming ritual
+    # so that it arrives by the tick the window opens (see
+    # departure_lead_minutes), and while that window is open.
+    ritual_departure_due: bool = False
+    # True on the last tick the current window is open while the ritual is
+    # still undone: with half-day ticks, resting now means missing it.
+    ritual_last_chance: bool = False
     active_route: List[str] = field(default_factory=list)
     # Fuzzy drift: a straggling agent temporarily breaks from the group to
     # take a random detour before the "reunite" rule pulls it back.
@@ -904,6 +946,18 @@ class DynamicState:
     risk_level: str = "none"
     risk_score: float = 0.0
     risk_factors: List[str] = field(default_factory=list)
+    # Event-triggered LLM calls: the model is only consulted when something
+    # worth re-thinking happens (see PilgrimAgent.detect_decision_events).
+    # llm_plan_* is the model's last choice, reused between events while it is
+    # still unfinished; event_watch holds last tick's watched values so the
+    # next tick can tell what changed. None = never evaluated yet.
+    llm_plan_action: str = ""
+    llm_plan_kind: str = ""
+    event_watch: Optional[dict] = None
+    last_trigger_events: List[str] = field(default_factory=list)
+    # Events whose model call did not go through (budget, rate limit, error)
+    # carry over so the next tick asks again instead of silently dropping them.
+    pending_trigger_events: List[str] = field(default_factory=list)
 
 
 # ==========================================
@@ -1029,9 +1083,12 @@ class BehaviorEngine:
         if state.stress >= 95.0 and (float(environment_data.get("density", 0.0)) >= 8.0 or hazard):
             return "ENTER_PANIC_MODE"
 
-        # Physical safety takes priority over ritual movement.
+        # Physical safety takes priority over ritual movement -- unless this is
+        # the ritual's last open tick and the pilgrim can still push through.
         if state.fatigue >= 75.0 or state.hydration <= 30.0:
-            return "REST"
+            can_push_through = state.fatigue < 90.0 and state.hydration > 15.0
+            if not (state.ritual_last_chance and can_push_through):
+                return "REST"
 
         if state.stress >= 80.0:
             return "AVOID_CROWD"
@@ -1050,12 +1107,17 @@ class BehaviorEngine:
         if (
             state.is_with_group
             and state.ritual_window_open
+            and not state.ritual_last_chance
             and random.random() < self._roll_straggle_probability()
         ):
             return "STRAGGLE"
 
-        # Ritual movement is blocked until the schedule opens the current window.
-        if not state.ritual_window_open:
+        # Ritual movement waits for the schedule -- except that a pilgrim sets
+        # off early when the site is far enough away that it would otherwise
+        # arrive after the window has opened (a tick is half a day).
+        if not state.ritual_window_open and (
+            not state.ritual_departure_due or state.current_node == state.target_node
+        ):
             return "WAIT_FOR_RITUAL_WINDOW"
 
         density = environment_data.get("density", 0.0)
@@ -1168,6 +1230,13 @@ class PilgrimAgent:
         self.state.boarded_unit_id = None
         self.state.awaiting_since_tick = -1
         self.state.checked_in_hotel_id = None
+        # A restarted journey is a fresh situation: forget the model's old plan
+        # and let the next decision count as the first one.
+        self.state.llm_plan_action = ""
+        self.state.llm_plan_kind = ""
+        self.state.event_watch = None
+        self.state.last_trigger_events = []
+        self.state.pending_trigger_events = []
         self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
         self._sync_ritual_goal({"simulated_minutes": -1})
         self.memory.short_term.remember_event("Ritual schedule reset to start")
@@ -1198,6 +1267,8 @@ class PilgrimAgent:
 
     def _sync_ritual_goal(self, environment_data: dict) -> None:
         """Set the current ritual, next ritual, target node, and window status."""
+        self.state.ritual_departure_due = False
+        self.state.ritual_last_chance = False
         window = self._current_window(environment_data)
         simulation_ritual_index = window["simulation_ritual_index"]
         self._mark_skipped_optional_rituals(simulation_ritual_index)
@@ -1213,6 +1284,12 @@ class PilgrimAgent:
             self.state.target_node = first_step.target_node
             self.state.ritual_window_open = False
             self.state.active_route = [self.state.current_node]
+            # Pilgrims arriving far from the first site set off before it opens.
+            now = self._resolve_simulated_minutes(environment_data)
+            self.state.ritual_departure_due = now >= 0 and (
+                first_step.window_start_minute - now
+                <= departure_lead_minutes(self.state.current_node, first_step.target_node)
+            )
         elif simulation_ritual_index >= len(HAJJ_RITUAL_SCHEDULE):
             # Once all ticks are consumed, freeze ritual movement as complete.
             self.state.ritual_day_index = len(HAJJ_RITUAL_SCHEDULE) - 1
@@ -1220,7 +1297,7 @@ class PilgrimAgent:
             self.state.current_ritual = "Hajj Complete"
             self.state.next_ritual = "Completed"
             self.state.next_ritual_day_label = "Completed"
-            self.state.target_node = self.state.current_node
+            self._settle_target_where_standing()
             self.state.ritual_window_open = False
             self.state.active_route = []
         else:
@@ -1232,12 +1309,21 @@ class PilgrimAgent:
                 self.state.current_ritual = "Hajj Complete"
                 self.state.next_ritual = "Completed"
                 self.state.next_ritual_day_label = "Completed"
-                self.state.target_node = self.state.current_node
+                self._settle_target_where_standing()
                 self.state.ritual_window_open = False
                 self.state.active_route = []
                 self.state.ritual_day_index = len(self.memory.long_term.ritual_schedule) - 1
                 return
             self.state.ritual_window_open = window["ritual_window_open"]
+            minutes_until_window = step.window_start_minute - window["simulated_minutes"]
+            self.state.ritual_departure_due = self.state.ritual_window_open or (
+                minutes_until_window <= departure_lead_minutes(self.state.current_node, step.target_node)
+            )
+            self.state.ritual_last_chance = (
+                self.state.ritual_window_open
+                and step.window_end_minute - window["simulated_minutes"] <= SIMULATED_MINUTES_PER_TICK
+                and step.progress_key not in self.memory.long_term.ritual_progress
+            )
             self.state.ritual_day_index = step.sequence_order - 1
             self.state.ritual_day_label = build_ritual_day_label(step)
             self.state.current_ritual = step.ritual_name
@@ -1247,6 +1333,16 @@ class PilgrimAgent:
 
         if not self.memory.long_term.ritual_schedule:
             self.memory.long_term.ritual_schedule = self._get_personal_ritual_schedule()
+
+    def _settle_target_where_standing(self) -> None:
+        """Once Hajj is complete, the pilgrim's target is wherever it stands.
+
+        Not while it is riding a bus, though: its current node is then the stop
+        it boarded at, and retargeting there would send it straight back on
+        arrival. It settles at its destination on the next tick instead.
+        """
+        if self.state.travel_state != "IN_TRANSIT":
+            self.state.target_node = self.state.current_node
 
     def _mark_completed_rituals_before_current_tick(self, environment_data: dict) -> None:
         """Auto-complete rituals from earlier ticks so progress stays synchronized."""
@@ -1559,7 +1655,8 @@ class PilgrimAgent:
             self._maybe_check_out_hotel()
             if not self.state.is_straggling:
                 self.state.is_straggling = True
-                self.state.straggle_ticks_remaining = random.randint(1, 3)
+                detour_minutes = random.randint(*STRAGGLE_MINUTES_RANGE)
+                self.state.straggle_ticks_remaining = max(1, round(detour_minutes / SIMULATED_MINUTES_PER_TICK))
             neighbors = ROUTE_GRAPH.get(self.state.current_node, [])
             if neighbors:
                 detour_node = random.choice(neighbors)
@@ -1610,6 +1707,21 @@ class PilgrimAgent:
                 self.state.active_route = []
                 return
             self._apply_travel_load(destination, environment_data)
+
+    def arrive_by_bus(self, environment_data: Optional[dict]) -> None:
+        """Finish a bus trip: walk on to the ritual site and record the ritual.
+
+        Called by the convoy coordinator when this pilgrim's bus reaches its
+        destination zone partway through a tick. The walk is the rest of the
+        move the pilgrim already chose; doing it now rather than next tick
+        matters when a tick is half a day and the window may close by then.
+        """
+        if environment_data is None:
+            return
+        target = self.state.target_node
+        if target and target != self.state.current_node and zone_of(target) == zone_of(self.state.current_node):
+            self._apply_travel_load(target, environment_data)
+        self._update_ritual_progress(environment_data)
 
     def _hotel_info_for_hamlah(self, environment_data: dict) -> Optional[dict]:
         """Look up this pilgrim's Hamlah's hotel from the shared environment payload."""
@@ -1858,6 +1970,82 @@ class PilgrimAgent:
 
         return actions
 
+    # ------------------------------------------------------------------
+    # Event-triggered decisions
+    #
+    # Established crowd simulators keep the expensive "thinking" layer out of
+    # the per-tick loop: goals are re-planned when something happens, and
+    # cheap rules carry the agent in between. These two methods give the LLM
+    # layer that shape: detect_decision_events says *whether* this tick is
+    # worth a model call, reusable_plan says what to do when it is not.
+    # ------------------------------------------------------------------
+    def detect_decision_events(self, environment_data: dict) -> List[str]:
+        """Return the events since last tick that warrant a fresh LLM decision.
+
+        Call once per tick, after perception and risk scoring. Watched values
+        are compared tick-to-tick (not against the last model call), then
+        stored for the next comparison. Events left pending by a model call
+        that did not go through are returned again (and cleared here).
+        """
+        state = self.state
+        carried_over = list(state.pending_trigger_events)
+        state.pending_trigger_events = []
+        hazard = environment_data.get("hazard")
+        current = {
+            "ritual": f"{state.current_ritual}|{state.target_node}",
+            "window_open": bool(state.ritual_window_open),
+            "hazard": str(hazard) if hazard else "",
+            "risk_level": state.risk_level,
+            "with_group": bool(state.is_with_group),
+        }
+        previous = state.event_watch
+        state.event_watch = current
+
+        if previous is None:
+            return ["first_decision"]
+
+        events: List[str] = carried_over
+        # A window "opens" when it goes from closed to open, or when the
+        # schedule moves straight on to a new ritual whose window is open.
+        if current["window_open"] and (
+            not previous["window_open"] or previous["ritual"] != current["ritual"]
+        ):
+            events.append("ritual_window_opened")
+        if current["hazard"] and current["hazard"] != previous["hazard"]:
+            events.append("hazard_appeared")
+        if current["risk_level"] != previous["risk_level"]:
+            events.append("risk_level_changed")
+        if previous["with_group"] and not current["with_group"]:
+            events.append("separated_from_group")
+        # Carried-over events come first; drop repeats while keeping order.
+        return list(dict.fromkeys(events))
+
+    def reusable_plan(self, available_actions: List[dict]) -> Optional[str]:
+        """Return the model's last plan if it is still unfinished and executable.
+
+        Only multi-tick intentions carry over -- a movement toward a node the
+        pilgrim has not reached yet (e.g. a cross-zone move that queued for a
+        bus). One-shot actions (rest, straggle, evacuate, avoid) are not
+        repeated blindly; the rule ladder takes over instead.
+        """
+        state = self.state
+        plan = state.llm_plan_action
+        if not plan or not (state.ritual_window_open or state.ritual_departure_due):
+            return None
+        if state.llm_plan_kind not in {"advance", "reroute", "regroup"}:
+            return None
+        if not plan.startswith("MOVE_TO_") or plan == f"MOVE_TO_{state.current_node}":
+            return None
+        offered_kind = next(
+            (entry.get("kind") for entry in available_actions if entry.get("action") == plan),
+            None,
+        )
+        # The same action must still mean the same thing: a stale "advance" to
+        # last ritual's target must not be reused as if it were still the plan.
+        if offered_kind != state.llm_plan_kind:
+            return None
+        return plan
+
     def build_observation(self, environment_data: dict) -> dict:
         """Build the full environment snapshot handed to the LLM each step.
 
@@ -1917,6 +2105,8 @@ class PilgrimAgent:
                 "target_node": target,
                 "target_zone": zone_of(target) if target else None,
                 "window_open": bool(state.ritual_window_open),
+                "should_travel_now": bool(state.ritual_departure_due and not state.ritual_window_open),
+                "last_chance_this_step": bool(state.ritual_last_chance),
                 "distance_hops": max(0, len(plan_route(current, target)) - 1) if target else 0,
                 "requires_bus": bool(target) and zone_of(current) != zone_of(target),
                 "rituals_completed": len(self.memory.long_term.ritual_progress),
@@ -1993,6 +2183,8 @@ class PilgrimAgent:
                 "next_ritual": self.state.next_ritual,
                 "next_ritual_day_label": self.state.next_ritual_day_label,
                 "ritual_window_open": self.state.ritual_window_open,
+                "ritual_departure_due": self.state.ritual_departure_due,
+                "ritual_last_chance": self.state.ritual_last_chance,
                 "active_route": self.state.active_route,
                 "is_straggling": self.state.is_straggling,
                 "straggle_ticks_remaining": self.state.straggle_ticks_remaining,
@@ -2003,6 +2195,8 @@ class PilgrimAgent:
                 "last_decision_source": self.state.last_decision_source,
                 "last_decision_reason": self.state.last_decision_reason,
                 "last_fallback_action": self.state.last_fallback_action,
+                "last_trigger_events": list(self.state.last_trigger_events),
+                "llm_plan_action": self.state.llm_plan_action,
                 "risk_level": self.state.risk_level,
                 "risk_score": self.state.risk_score,
                 "risk_factors": list(self.state.risk_factors),

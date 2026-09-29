@@ -460,8 +460,8 @@ LLM_AGENT_IDS: set = set()
 def refresh_llm_agent_selection(agent_ids) -> set:
     """Pick the deterministic subset of pilgrims the LLM drives.
 
-    A full run is 240 ticks; driving every pilgrim with a live model call would
-    mean six-figure API calls. LLM_MAX_AGENTS caps it (0 = the whole roster),
+    A full run is ~22 half-day ticks; driving a large roster with a live model
+    call per pilgrim per tick still adds up quickly. LLM_MAX_AGENTS caps it (0 = the whole roster),
     and the selection is the lowest pilgrim ids so a demo always shows the same
     agents and a re-run is comparable.
     """
@@ -538,6 +538,31 @@ def llm_pilgrim_override(agent, environment_data: dict, proposed_action: str):
         significant_levels=frozenset(SIGNIFICANT_RISK_LEVELS),
     )
 
+    # Event gate: only a real change in the pilgrim's situation earns a model
+    # call. Between events the pilgrim keeps its last model plan while that is
+    # still unfinished, otherwise it follows the rule ladder -- the same split
+    # established crowd simulators use between re-planning and routine motion.
+    trigger_events = agent.detect_decision_events(environment_data)
+    state.last_trigger_events = list(trigger_events)
+    if LLM_ENGINE.settings.event_triggered and not trigger_events:
+        plan = agent.reusable_plan(available_actions)
+        if plan:
+            action, source = plan, "reused_plan"
+            reason = "No new event since the last model decision; continuing its unfinished plan."
+        else:
+            action, source = proposed_action, "rule_no_event"
+            reason = "No new event since the last model decision; following the rule-based engine."
+        LLM_ENGINE.record_no_event_decision(reused_plan=bool(plan))
+        state.last_decision_source = source
+        state.last_decision_reason = reason
+        state.last_fallback_action = proposed_action
+        _open_decision_record(
+            agent, observation, available_actions, simulated_time,
+            action=action, source=source, reason=reason,
+            fallback_action=proposed_action, trigger_events=[],
+        )
+        return action
+
     decision = llm_decide_action(
         environment_state=observation,
         available_actions=available_actions,
@@ -545,20 +570,57 @@ def llm_pilgrim_override(agent, environment_data: dict, proposed_action: str):
         engine=LLM_ENGINE,
     )
 
-    action_kind = next(
-        (entry.get("kind", "") for entry in available_actions if entry.get("action") == decision.action),
-        "",
-    )
+    if decision.used_llm:
+        # This answer is the plan the pilgrim follows until the next event.
+        state.llm_plan_action = decision.action
+        state.llm_plan_kind = next(
+            (entry.get("kind", "") for entry in available_actions if entry.get("action") == decision.action),
+            "",
+        )
+    else:
+        # The call did not go through (budget, rate limit, error): the events
+        # still need an answer, so ask again next tick, and do not keep a plan
+        # that was made before them.
+        state.pending_trigger_events = list(trigger_events)
+        state.llm_plan_action = ""
+        state.llm_plan_kind = ""
 
     # Provenance lands on the agent so the dashboard sidebar can show who chose.
     state.last_decision_source = decision.source
     state.last_decision_reason = decision.reason
     state.last_fallback_action = decision.fallback_action or proposed_action
 
+    _open_decision_record(
+        agent, observation, available_actions, simulated_time,
+        action=decision.action, source=decision.source, reason=decision.reason,
+        fallback_action=decision.fallback_action, trigger_events=trigger_events,
+        decision=decision,
+    )
+    return decision.action
+
+
+def _open_decision_record(
+    agent,
+    observation: dict,
+    available_actions: list,
+    simulated_time: str,
+    action: str,
+    source: str,
+    reason: str,
+    fallback_action: str,
+    trigger_events: list,
+    decision=None,
+) -> None:
+    """Log one decision step; ``decision`` carries call metadata when a model was asked."""
+    state = agent.state
+    action_kind = next(
+        (entry.get("kind", "") for entry in available_actions if entry.get("action") == action),
+        "",
+    )
     SIMULATION_LOG.open_decision(DecisionRecord(
         tick=state.simulation_tick,
         simulated_time=simulated_time,
-        pilgrim_id=pilgrim_id,
+        pilgrim_id=agent.profile.pilgrim_id,
         location=state.current_node,
         zone=observation.get("location", {}).get("zone", ""),
         target_node=state.target_node,
@@ -570,21 +632,21 @@ def llm_pilgrim_override(agent, environment_data: dict, proposed_action: str):
         temperature_c=observation.get("conditions", {}).get("temperature_c", 0.0),
         congestion_ratio=observation.get("location", {}).get("congestion_ratio", 0.0),
         available_actions=[entry["action"] for entry in available_actions],
-        action=decision.action,
+        action=action,
         action_kind=action_kind,
         distance_hops=observation.get("ritual", {}).get("distance_hops", 0),
-        reason=decision.reason,
-        source=decision.source,
-        fallback_action=decision.fallback_action,
-        error=decision.error,
-        latency_ms=decision.latency_ms,
-        provider=decision.provider,
-        model=decision.model,
+        reason=reason,
+        source=source,
+        trigger_events=list(trigger_events),
+        fallback_action=fallback_action,
+        error=decision.error if decision else "",
+        latency_ms=decision.latency_ms if decision else 0,
+        provider=decision.provider if decision else "",
+        model=decision.model if decision else "",
         _stress_before=state.stress,
         _fatigue_before=state.fatigue,
         _hydration_before=state.hydration,
     ))
-    return decision.action
 
 
 def finalize_agent_decision(agent, action: str, environment_data: dict) -> None:
@@ -1194,7 +1256,14 @@ class HajjSimHandler(SimpleHTTPRequestHandler):
                 HAMLAH_REGISTRY.get_dispatch_offsets(),
                 post_step_hook=finalize_agent_decision,
             )
-            CONVOY_COORDINATOR.step(REPOSITORY.agents, UNIT_REPOSITORY.units, ENVIRONMENT.tick + 1)
+            # The coordinator needs the Hamlah offsets too: a pilgrim whose bus
+            # arrives mid-tick walks on and may complete its ritual right away.
+            CONVOY_COORDINATOR.step(
+                REPOSITORY.agents,
+                UNIT_REPOSITORY.units,
+                ENVIRONMENT.tick + 1,
+                {**environment_payload, "hamlah_dispatch_offsets": HAMLAH_REGISTRY.get_dispatch_offsets()},
+            )
             UNIT_REPOSITORY.step_all(environment_payload, REPOSITORY.list_agents())
             sync_hotel_occupancy()
             ENVIRONMENT.tick += 1

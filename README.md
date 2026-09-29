@@ -14,7 +14,7 @@ Current crowd management is heavily reactive; HajjSim aims to make it **proactiv
 
 ## ✨ Core Features
 * **4-Layer Agent Anatomy:** Pilgrim agents operate with distinct cognitive profiles: Static (DNA), Dynamic (Vitals), Memory, and a Behavior Engine (*Perceive → Decide → Act* loop).
-* **Ritual Progression Logic:** Agents navigate a spatial-temporal graph governed by an event-driven, macro-temporal tick engine. 1 tick = 1 distinct ritual stage.
+* **Ritual Progression Logic:** Agents navigate a spatial-temporal graph governed by an event-driven, macro-temporal tick engine. 1 tick = half a simulated day (12 hours); a full Hajj run is about 22 ticks.
 * **Live GPS & Heatmapping:** Real-time visualization of crowd movement and density stress using Leaflet.js.
 * **LLM-Driven Decisions:** Pedestrian agents observe their surroundings (congestion, hazards, distances, risk) and ask a language model which of the engine's valid actions to take, with the rule-based ladder as a safe fallback.
 * **Adversarial Testing:** Ability to dynamically inject environmental hazards (e.g., blocked gates, dropped luggage) to test swarm resilience.
@@ -198,6 +198,8 @@ Even with a working key, these are all expected and visible in the decision log'
 | `fallback_circuit_open` | The provider failed repeatedly, so calls are paused (see below). |
 | `fallback_rate_limit` | `LLM_MAX_REQUESTS_PER_MINUTE` is spent for this minute. |
 | `rule_based` | The pilgrim is not in the `LLM_MAX_AGENTS` sample, or is locked in transit (no real choice, so no call is made). |
+| `reused_plan` | Nothing changed since the model last decided, so the pilgrim continues that unfinished plan (see *Event-triggered decisions*). |
+| `rule_no_event` | Nothing changed since the model last decided and there is no unfinished plan, so the rule ladder chose. |
 
 ### Configuring the LLM
 
@@ -212,6 +214,7 @@ Even with a working key, these are all expected and visible in the decision log'
 | `LLM_DECISION_WORKERS` | `12` | How many decisions are made concurrently per tick. |
 | `LLM_MAX_CALLS_PER_TICK` | `40` | Hard ceiling on live API calls per tick. `0` = unlimited. |
 | `LLM_CACHE_ENABLED` | `1` | Reuse one answer across near-identical situations. |
+| `LLM_EVENT_TRIGGERED` | `1` | Only ask the model when something happens to the pilgrim. `0` = ask every tick. |
 | `LLM_TIMEOUT_SECONDS` | `12` | Per-call timeout. |
 | `LLM_MAX_RETRIES` | `1` | Retries before falling back. Only applied to retryable errors (429, 5xx, network) — a 401 or a bad model name is never retried. |
 | `LLM_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures before the engine stops calling the provider. `0` disables. |
@@ -219,29 +222,49 @@ Even with a working key, these are all expected and visible in the decision log'
 | `LLM_MAX_REQUESTS_PER_MINUTE` | `0` | Requests/minute ceiling, to stay inside a free tier. `0` = unlimited. |
 | `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
 
-> **Cost note.** A full run is ~240 ticks. With `LLM_MAX_AGENTS=0` and a large
-> roster that means a very large number of API calls. Raise the caps deliberately.
+> **Cost note.** A full run is ~22 half-day ticks. With `LLM_MAX_AGENTS=0` and a large
+> roster that is still one decision per pilgrim per tick. Raise the caps deliberately.
+
+### Event-triggered decisions
+
+By default the model is **not** asked every tick. As in established crowd
+simulators, re-planning is kept out of the per-tick loop: a pilgrim only
+consults the model when one of these events happens to it —
+
+| Event | When it fires |
+| --- | --- |
+| `first_decision` | The pilgrim's first decision of the run (or after a ritual reset). |
+| `ritual_window_opened` | Its ritual window goes from closed to open, or the schedule moves on to a new ritual whose window is already open. |
+| `hazard_appeared` | A hazard is active that was not active last tick (including one hazard replacing another). |
+| `risk_level_changed` | Its risk band (none / low / moderate / high / severe) differs from last tick, in either direction. |
+| `separated_from_group` | It was with its group last tick and is not now. |
+
+Between events the pilgrim continues the model's last plan while that plan is
+still an unfinished move (e.g. a cross-zone trip that queued for a bus), and
+otherwise follows the rule ladder. If a model call does not go through (budget,
+rate limit, error), its events carry over and the model is asked again next
+tick. Each logged decision records its `trigger_events`, and the dashboard
+status bar counts how many decisions needed no call. Set
+`LLM_EVENT_TRIGGERED=0` to go back to one call per pilgrim per tick.
 
 ### Getting 100% of decisions from the model
 
-Set `LLM_MAX_AGENTS=0` and `LLM_MAX_CALLS_PER_TICK=0` and every pilgrim that has
-a real choice to make will be decided by the model. Decisions within a tick run
+Set `LLM_MAX_AGENTS=0`, `LLM_MAX_CALLS_PER_TICK=0` and `LLM_EVENT_TRIGGERED=0`
+and every pilgrim that has a real choice to make will be decided by the model. Decisions within a tick run
 **in parallel** (`LLM_DECISION_WORKERS`), so a tick costs roughly one model
 latency rather than one per agent — measured with 12 agents against live Gemini:
 **1.86s per tick, 100% model decisions**, where sequential would have been ~20s.
 
-After that, the ceiling is your provider quota, not this code. The arithmetic
-for a full 239-tick run:
+After that, the ceiling is your provider quota, not this code. Measured model
+calls for a full 22-tick run (offline `echo` provider, situation cache off):
 
-| Roster | Decisions needed | vs. Gemini free tier (1,000/day) |
-| ---: | ---: | --- |
-| 3 agents | ~600 | fits in one day |
-| 10 agents | ~2,000 | 2 days, or a paid tier |
-| 43 agents | ~8,700 | 9 days, or a paid tier |
+| Roster | Every tick (`LLM_EVENT_TRIGGERED=0`) | Event-triggered (default) | vs. Gemini free tier (1,000/day) |
+| ---: | ---: | ---: | --- |
+| 3 agents | ~50 | ~30 | fits easily |
+| 10 agents | ~200 | ~140 | fits in one day |
+| 43 agents | ~900 | ~610 | fits in one day |
 
-So on the free tier, "100% of a complete run" is realistic for a **small roster**
-or a **short run**. With a bigger roster you get 100% until the daily quota runs
-out, then clean rule-based fallback. Three things stretch it:
+Three things stretch it further:
 
 * **The situation cache.** Pilgrims in the same place, same risk band, same
   option set reuse one answer. Those decisions are logged as `cache` — still the
@@ -387,6 +410,15 @@ in a fixed order: passenger count → capacity → a valid route exists → dema
 use an existing route → create one only if necessary → move only along a valid
 segment.
 
+### Timing inside a tick
+
+A tick is half a day, but a bus leg is 1–2.5 hours, so buses run on a minute
+clock inside each tick. A bus that arrives before the tick's 12 hours are used
+up sets its riders down; anyone not yet in their destination zone queues
+straight away for the next hop, and anyone who is walks on to the ritual site
+(and completes the ritual if its window is open). A leg that does not fit in
+what is left of the tick carries its remaining minutes into the next one.
+
 ### Rules
 
 | Rule | Where |
@@ -405,7 +437,7 @@ High capacity never forces movement — a 500-seat bus with 2 riders still waits
 ```python
 MIN_RIDERS_TO_MOVE = 5                          # minimum riders before departing
 DEFAULT_BUS_CAPACITY = 40                       # seats per bus
-MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH = 6    # 0 = enforce the minimum absolutely
+MAX_WAIT_MINUTES_BEFORE_UNDERFULL_DISPATCH = 360  # 0 = enforce the minimum absolutely
 ALLOW_EMPTY_REPOSITIONING = True                # False = forbid all empty movement
 ```
 
@@ -415,7 +447,7 @@ A strict reading of the rule deadlocks the simulation, so there are exactly two
 narrow exceptions. Both are configurable and both are logged:
 
 1. **Under-full dispatch.** A bus holding 1–4 riders for
-   `MAX_WAIT_TICKS_BEFORE_UNDERFULL_DISPATCH` ticks departs anyway, so a small
+   `MAX_WAIT_MINUTES_BEFORE_UNDERFULL_DISPATCH` (at least one tick) departs anyway, so a small
    group on a quiet corridor is not stranded for the rest of the run. Set to
    `0` to enforce the minimum absolutely.
 2. **Empty repositioning.** An empty bus may move to the other end of **its own
@@ -424,7 +456,7 @@ narrow exceptions. Both are configurable and both are logged:
    at one end, everyone at the far end waits forever. Set
    `ALLOW_EMPTY_REPOSITIONING = False` to forbid it.
 
-Measured over a full 239-tick run with 43 pilgrims: 52 under-minimum
+Measured over a full run with 43 pilgrims (at the earlier 60-minute tick): 52 under-minimum
 departures, **all** attributable to one of these two exceptions (22
 repositioning, 30 under-full), and **0** unexplained.
 
@@ -435,14 +467,14 @@ BUS_04: 0 riders -> staying stationary (minimum = 5)
 BUS_04: 2 riders -> staying stationary (minimum = 5), waited 3 tick(s)
 BUS_04: 10/10 capacity reached -- 15 pilgrim(s) left waiting at Jeddah_Airport
 BUS_04: 6 riders -> minimum reached, starting route (Aziziyah_Zone -> Mina_West_Gate)
-BUS_04: moving Aziziyah_Zone -> Mina_West_Gate (6/40 capacity, 2 tick(s))
+BUS_04: moving Aziziyah_Zone -> Mina_West_Gate (6/40 capacity, 90 min)
 BUS_T1: REFUSED move Jeddah_Airport -> Arafat_Main_Field -- not an adjacent segment of its route
 Dispatcher: 1 pilgrim(s) need Mina -> Muzdalifah, no bus serves it -- checking existing routes
 Dispatcher: no suitable route -> creating a new valid route for Mina -> Muzdalifah
 Dispatcher: created ROUTE_GEN_01: Mina_Camps_Core -> Muzdalifah_Open_Area
 ```
 
-Set `BUS_LOG=0` to silence it — a 240-tick run with a full fleet is a lot of output.
+Set `BUS_LOG=0` to silence it — a full run with a full fleet is a lot of output.
 
 ### Files added by this feature
 

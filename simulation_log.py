@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-# Hard caps: a 240-tick run with a wide agent sample stays well inside these.
+# Hard caps: a full run with a wide agent sample stays well inside these.
 MAX_DECISION_RECORDS = 20000
 MAX_RISK_EVENTS = 4000
 MAX_TICK_RECORDS = 2000
@@ -67,6 +67,9 @@ class DecisionRecord:
     distance_hops: int = 0
     reason: str = ""
     source: str = ""
+    # What made this a decision point (e.g. risk_level_changed). Empty when
+    # event-triggered mode reused the last plan or the rules instead.
+    trigger_events: List[str] = field(default_factory=list)
     fallback_action: str = ""
     error: str = ""
     latency_ms: int = 0

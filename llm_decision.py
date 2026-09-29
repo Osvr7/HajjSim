@@ -129,14 +129,19 @@ class LLMSettings:
     max_output_tokens: int = 300
 
     # --- cost / volume control ---------------------------------------------
-    # A full run is 240 ticks; with hundreds of pilgrims an unbounded
-    # "one LLM call per agent per tick" policy would mean six-figure API
-    # calls. These three knobs keep a run affordable and fast while still
-    # giving genuinely dynamic, per-step LLM decisions to the agents that
-    # matter. Set LLM_MAX_AGENTS=0 to drive the entire population.
+    # A full run is ~22 half-day ticks; with hundreds of pilgrims an
+    # unbounded "one LLM call per agent per tick" policy still means
+    # thousands of calls. These knobs keep a run affordable and fast while
+    # still giving genuinely dynamic, per-step LLM decisions to the agents
+    # that matter. Set LLM_MAX_AGENTS=0 to drive the entire population.
     max_agents: int = 10
     max_calls_per_tick: int = 40
     cache_enabled: bool = True
+    # Only consult the model when something happens to the pilgrim (ritual
+    # window opens, hazard appears, risk level changes, separated from group).
+    # Between events the pilgrim keeps its last model plan or follows the
+    # rules. Set LLM_EVENT_TRIGGERED=0 to call the model every tick instead.
+    event_triggered: bool = True
 
     # --- circuit breaker ----------------------------------------------------
     # When a provider is definitively broken (bad key, wrong model, outage)
@@ -185,6 +190,7 @@ class LLMSettings:
             max_agents=_env_int("LLM_MAX_AGENTS", 10),
             max_calls_per_tick=_env_int("LLM_MAX_CALLS_PER_TICK", 40),
             cache_enabled=_env_flag("LLM_CACHE_ENABLED", True),
+            event_triggered=_env_flag("LLM_EVENT_TRIGGERED", True),
             circuit_failure_threshold=_env_int("LLM_CIRCUIT_FAILURE_THRESHOLD", 5),
             circuit_cooldown_seconds=_env_float("LLM_CIRCUIT_COOLDOWN_SECONDS", 60.0),
             max_requests_per_minute=_env_int("LLM_MAX_REQUESTS_PER_MINUTE", 0),
@@ -209,6 +215,7 @@ class LLMSettings:
             "max_agents": self.max_agents,
             "max_calls_per_tick": self.max_calls_per_tick,
             "cache_enabled": self.cache_enabled,
+            "event_triggered": self.event_triggered,
             "timeout_seconds": self.timeout_seconds,
             "circuit_failure_threshold": self.circuit_failure_threshold,
             "circuit_cooldown_seconds": self.circuit_cooldown_seconds,
@@ -448,7 +455,10 @@ SYSTEM_PROMPT = (
     "(age, health status, chronic conditions, mobility).\n"
     "3. Congestion and hazards on the current node versus the candidate destinations.\n"
     "4. Progress toward the current ritual obligation, which is time-boxed: falling behind "
-    "the ritual window has a real cost, so do not stall without a safety reason.\n"
+    "the ritual window has a real cost, so do not stall without a safety reason. Each step "
+    "is half a day; when ritual.should_travel_now is true the site is far enough away that "
+    "waiting a step would mean arriving after the window has opened, and when "
+    "ritual.last_chance_this_step is true the window closes before the next step.\n"
     "5. Distance (hops) and accessibility -- some destinations need a bus and will queue.\n"
     "6. The pilgrim's recent actions -- avoid oscillating between two nodes, and avoid "
     "changing route repeatedly when nothing in the environment has changed.\n"
@@ -618,6 +628,10 @@ class LLMDecisionEngine:
             "decisions_total": 0,
             "decisions_from_llm": 0,
             "decisions_from_fallback": 0,
+            # Event-triggered mode: decisions made without a model call
+            # because nothing had changed for the pilgrim.
+            "decisions_without_event": 0,
+            "plans_reused": 0,
         }
         self.last_error: str = ""
 
@@ -677,6 +691,14 @@ class LLMDecisionEngine:
             "circuit_retry_in_seconds": round(circuit_retry_in, 1),
             "requests_last_minute": requests_last_minute,
         }
+
+    def record_no_event_decision(self, reused_plan: bool) -> None:
+        """Count a decision that skipped the model because no event occurred."""
+        with self._lock:
+            self.stats["decisions_total"] += 1
+            self.stats["decisions_without_event"] += 1
+            if reused_plan:
+                self.stats["plans_reused"] += 1
 
     # -- the main entry point ----------------------------------------------
     def decide(
@@ -940,6 +962,8 @@ class LLMDecisionEngine:
                 str(location.get("zone")),
                 str(ritual.get("target_node")),
                 str(ritual.get("window_open")),
+                str(ritual.get("should_travel_now")),
+                str(ritual.get("last_chance_this_step")),
                 str(risk.get("level")),
                 str(environment_state.get("conditions", {}).get("hazard")),
                 str(int(float(vitals.get("stress", 0)) // 10)),
